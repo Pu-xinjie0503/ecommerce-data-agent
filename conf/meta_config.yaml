@@ -1,0 +1,68 @@
+tables:
+  - name: fact_order
+    role: fact
+    description: 订单事实表，用于记录用户订单、商品、金额和下单时间
+    columns:
+      - name: order_id
+        role: primary_key
+        description: 订单ID
+        alias:
+          - 订单编号
+          - 订单号
+        sync: false
+        sync_values: false
+
+      - name: user_id
+        role: dimension
+        description: 用户ID
+        alias:
+          - 用户编号
+          - 买家ID
+        sync: true
+        sync_values: true
+
+      - name: product_id
+        role: dimension
+        description: 商品ID
+        alias:
+          - 商品编号
+          - 商品ID
+        sync: true
+        sync_values: true
+
+      - name: amount
+        role: measure
+        description: 订单金额
+        alias:
+          - 销售额
+          - 成交金额
+          - 订单金额
+        sync: false
+        sync_values: false
+
+      - name: order_time
+        role: time
+        description: 下单时间
+        alias:
+          - 订单时间
+          - 支付时间
+        sync: false
+        sync_values: false
+
+metrics:
+  - name: total_sales
+    description: 总销售额，统计订单金额的总和
+    alias:
+      - GMV
+      - 销售额
+      - 总成交金额
+    related_columns:
+      - fact_order.amount
+
+  - name: order_count
+    description: 订单数量，统计订单表中的订单记录数
+    alias:
+      - 订单数
+      - 成交订单数
+    related_columns:
+      - fact_order.order_id

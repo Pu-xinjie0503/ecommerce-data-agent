@@ -1,0 +1,35 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Logs
+logs/
+*.log
+
+# Environment files
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+
+# TEI / HuggingFace model cache
+docker/tei-data/
+tei-data/
+
+# Cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
