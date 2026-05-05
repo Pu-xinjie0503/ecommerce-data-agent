@@ -1,16 +1,144 @@
-import asyncio
+"""
+召回信息合并节点
+
+把字段、字段取值、指标三路召回结果聚合成统一上下文。
+"""
 
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
-from app.agent.state import DataAgentState
+from app.agent.state import (
+    ColumnInfoState,
+    DataAgentState,
+    MetricInfoState,
+    TableInfoState,
+)
+from app.core.log import logger
+from app.entities.column_info import ColumnInfo
+from app.entities.metric_info import MetricInfo
+from app.entities.table_info import TableInfo
+from app.entities.value_info import ValueInfo
 
 
 async def merge_retrieved_info(
     state: DataAgentState,
     runtime: Runtime[DataAgentContext],
 ):
-    writer = runtime.stream_writer
-    writer("合并召回信息")
+    """合并召回结果，并输出 SQL 生成前的候选表信息和指标信息"""
 
-    await asyncio.sleep(0.5)
+    writer = runtime.stream_writer
+    step = "合并召回信息"
+    writer({"type": "progress", "step": step, "status": "running"})
+
+    try:
+        retrieved_column_infos: list[ColumnInfo] = state["retrieved_column_infos"]
+        retrieved_metric_infos: list[MetricInfo] = state["retrieved_metric_infos"]
+        retrieved_value_infos: list[ValueInfo] = state["retrieved_value_infos"]
+
+        meta_mysql_repository = runtime.context["meta_mysql_repository"]
+
+        # 1. 以 column_id 为 key 合并字段信息
+        retrieved_column_infos_map: dict[str, ColumnInfo] = {
+            column_info.id: column_info for column_info in retrieved_column_infos
+        }
+
+        # 2. 补齐指标依赖字段
+        for metric_info in retrieved_metric_infos:
+            for column_id in metric_info.relevant_columns:
+                if column_id not in retrieved_column_infos_map:
+                    column_info: ColumnInfo = (
+                        await meta_mysql_repository.get_column_info_by_id(column_id)
+                    )
+                    retrieved_column_infos_map[column_id] = column_info
+
+        # 3. 把字段取值合并回字段 examples
+        for value_info in retrieved_value_infos:
+            value = value_info.value
+            column_id = value_info.column_id
+
+            if column_id not in retrieved_column_infos_map:
+                column_info: ColumnInfo = (
+                    await meta_mysql_repository.get_column_info_by_id(column_id)
+                )
+                retrieved_column_infos_map[column_id] = column_info
+
+            if value not in retrieved_column_infos_map[column_id].examples:
+                retrieved_column_infos_map[column_id].examples.append(value)
+
+        # 4. 按表组织字段上下文
+        table_to_columns_map: dict[str, list[ColumnInfo]] = {}
+
+        for column_info in retrieved_column_infos_map.values():
+            table_id = column_info.table_id
+
+            if table_id not in table_to_columns_map:
+                table_to_columns_map[table_id] = []
+
+            table_to_columns_map[table_id].append(column_info)
+
+        # 5. 补齐主外键字段
+        for table_id in table_to_columns_map.keys():
+            key_columns: list[ColumnInfo] = (
+                await meta_mysql_repository.get_key_columns_by_table_id(table_id)
+            )
+
+            column_ids = [column_info.id for column_info in table_to_columns_map[table_id]]
+
+            for key_column in key_columns:
+                if key_column.id not in column_ids:
+                    table_to_columns_map[table_id].append(key_column)
+
+        # 6. 生成表结构上下文
+        table_infos: list[TableInfoState] = []
+
+        for table_id, column_infos in table_to_columns_map.items():
+            table_info: TableInfo = await meta_mysql_repository.get_table_info_by_id(
+                table_id
+            )
+
+            columns = [
+                ColumnInfoState(
+                    name=column_info.name,
+                    type=column_info.type,
+                    role=column_info.role,
+                    examples=column_info.examples,
+                    description=column_info.description,
+                    alias=column_info.alias,
+                )
+                for column_info in column_infos
+            ]
+
+            table_info_state = TableInfoState(
+                name=table_info.name,
+                role=table_info.role,
+                description=table_info.description,
+                columns=columns,
+            )
+
+            table_infos.append(table_info_state)
+
+        # 7. 生成指标上下文
+        metric_infos: list[MetricInfoState] = [
+            MetricInfoState(
+                name=metric_info.name,
+                description=metric_info.description,
+                relevant_columns=metric_info.relevant_columns,
+                alias=metric_info.alias,
+            )
+            for metric_info in retrieved_metric_infos
+        ]
+
+        logger.info(f"合并后的表信息: {[table_info['name'] for table_info in table_infos]}")
+        logger.info(f"合并后的指标信息: {[metric_info['name'] for metric_info in metric_infos]}")
+
+        writer({"type": "progress", "step": step, "status": "success"})
+
+        return {
+            "table_infos": table_infos,
+            "metric_infos": metric_infos,
+        }
+
+    except Exception as e:
+        logger.error(f"{step} failed: {e}")
+        writer({"type": "progress", "step": step, "status": "error"})
+        raise
