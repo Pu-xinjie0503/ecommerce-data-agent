@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from omegaconf import OmegaConf
-
+from dotenv import load_dotenv
 
 @dataclass
 class File:
@@ -73,7 +73,11 @@ class AppConfig:
     llm: LLMConfig
 
 
-config_file = Path(__file__).parents[2] / "conf" / "app_config.yaml"
+project_root = Path(__file__).parents[2]
+
+config_file = project_root / "conf" / "app_config.yaml"
+
+load_dotenv(project_root / ".env")
 
 context = OmegaConf.load(config_file)
 schema = OmegaConf.structured(AppConfig)
