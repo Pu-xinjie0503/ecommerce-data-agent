@@ -1,4 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
 from app.entities.column_info import ColumnInfo
 from app.entities.column_metric import ColumnMetric
@@ -33,3 +34,65 @@ class MetaMySQLRepository:
         for column_metric in column_metrics:
             model = ColumnMetricMapper.to_model(column_metric)
             await self.session.merge(model)
+
+    async def get_column_info_by_id(self, column_id: str) -> ColumnInfo | None:
+        """根据字段 ID 查询字段元信息"""
+
+        sql = """
+        select *
+        from column_info
+        where id = :column_id
+        """
+
+        result = await self.session.execute(
+            text(sql),
+            {"column_id": column_id},
+        )
+
+        row = result.mappings().first()
+
+        if row is None:
+            return None
+
+        return ColumnInfo(**dict(row))
+
+    async def get_table_info_by_id(self, table_id: str) -> TableInfo | None:
+        """根据表 ID 查询表元信息"""
+
+        sql = """
+        select *
+        from table_info
+        where id = :table_id
+        """
+
+        result = await self.session.execute(
+            text(sql),
+            {"table_id": table_id},
+        )
+
+        row = result.mappings().first()
+
+        if row is None:
+            return None
+
+        return TableInfo(**dict(row))
+
+    async def get_key_columns_by_table_id(self, table_id: str) -> list[ColumnInfo]:
+        """查询指定表的主键和外键字段"""
+
+        sql = """
+        select *
+        from column_info
+        where table_id = :table_id
+          and role in ('primary_key', 'foreign_key')
+        """
+
+        result = await self.session.execute(
+            text(sql),
+            {"table_id": table_id},
+        )
+
+        return [
+            ColumnInfo(**dict(row))
+            for row in result.mappings().fetchall()
+        ]

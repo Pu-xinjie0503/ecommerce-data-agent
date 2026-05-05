@@ -44,7 +44,7 @@ async def merge_retrieved_info(
 
         # 2. 补齐指标依赖字段
         for metric_info in retrieved_metric_infos:
-            for column_id in metric_info.relevant_columns:
+            for column_id in metric_info.related_columns:
                 if column_id not in retrieved_column_infos_map:
                     column_info: ColumnInfo = (
                         await meta_mysql_repository.get_column_info_by_id(column_id)
@@ -122,7 +122,7 @@ async def merge_retrieved_info(
             MetricInfoState(
                 name=metric_info.name,
                 description=metric_info.description,
-                relevant_columns=metric_info.relevant_columns,
+                relevant_columns=metric_info.related_columns,
                 alias=metric_info.alias,
             )
             for metric_info in retrieved_metric_infos

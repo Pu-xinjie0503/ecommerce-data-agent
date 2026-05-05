@@ -7,7 +7,7 @@ Context 保存图执行过程中需要复用的外部依赖。
 
 from typing import TypedDict
 
-from langchain_huggingface import HuggingFaceEndpointEmbeddings
+from app.clients.embedding_client_manager import EmbeddingClientManager
 
 from app.repositories.es.value_es_repository import ValueESRepository
 from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
@@ -23,7 +23,7 @@ class DataAgentContext(TypedDict):
     column_qdrant_repository: ColumnQdrantRepository
 
     # Embedding 客户端
-    embedding_client: HuggingFaceEndpointEmbeddings
+    embedding_client: EmbeddingClientManager
 
     # 指标向量仓储
     metric_qdrant_repository: MetricQdrantRepository

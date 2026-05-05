@@ -17,7 +17,7 @@ class MetricInfoState(TypedDict):
 
     name: str
     description: str
-    relevant_columns: list[str]
+    related_columns: list[str]
     alias: list[str]
 
 
