@@ -1,37 +1,30 @@
 """问数查询接口路由
 
-第 15 章先不接入真实 LangGraph Agent。
-这里只用 fake_streamer 模拟智能体执行过程，验证 FastAPI + SSE 流式响应是否可用。
+负责定义前端访问的 `/api/query` 接口，把 HTTP 请求交给 QueryService，
+并把问数智能体执行过程以 SSE 形式持续返回给客户端。
 """
 
-import asyncio
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from starlette.responses import StreamingResponse
 
+from app.api.dependencies import get_query_service
 from app.api.schemas.query_schema import QuerySchema
+from app.services.query_service import QueryService
 
 
 query_router = APIRouter()
 
 
-async def fake_streamer():
-    """模拟智能体逐步返回执行进度的异步生成器"""
-
-    for i in range(10):
-        # 暂停 1 秒只是为了方便观察流式效果
-        await asyncio.sleep(1)
-
-        # SSE 消息格式：
-        # data: 内容\n\n
-        yield f"data: step:{i}\n\n"
-
-
 @query_router.post("/api/query")
-async def query_handler(query: QuerySchema):
-    """接收用户自然语言问题，并以 SSE 形式持续返回处理进度"""
+async def query_handler(
+    query: QuerySchema,
+    query_service: Annotated[QueryService, Depends(get_query_service)],
+):
+    """接收用户自然语言问题，并流式返回 LangGraph 工作流输出"""
 
     return StreamingResponse(
-        fake_streamer(),
+        query_service.query(query.query),
         media_type="text/event-stream",
     )
