@@ -48,3 +48,17 @@ class DWMySQLRepository:
         values = result.scalars().all()
 
         return [self._to_json_safe(value) for value in values]
+    
+    async def get_db_info(self):
+        """读取当前数仓数据库的方言和版本，供 SQL 生成提示词使用"""
+
+        sql = "select version()"
+        result = await self.session.execute(text(sql))
+        version = result.scalar()
+
+        dialect = self.session.bind.dialect.name
+
+        return {
+            "dialect": dialect,
+            "version": version,
+        }
