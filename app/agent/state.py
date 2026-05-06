@@ -81,3 +81,6 @@ class DataAgentState(TypedDict, total=False):
     # SQL 闭环
     sql: str
     error: str
+
+    #结果
+    result: list[dict]
