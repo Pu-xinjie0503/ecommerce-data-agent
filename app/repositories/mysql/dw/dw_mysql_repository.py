@@ -27,6 +27,19 @@ class DWMySQLRepository:
             return value.isoformat(sep=" ")
 
         return value
+    
+    async def validate(self, sql: str):
+        """用 EXPLAIN 校验 SQL 是否能被数据库解析"""
+
+        validate_sql = f"explain {sql}"
+        await self.session.execute(text(validate_sql))
+
+
+    async def run(self, sql: str) -> list[dict]:
+        """执行 SQL，并返回字典列表结果"""
+
+        result = await self.session.execute(text(sql))
+        return [dict(row) for row in result.mappings().fetchall()]
 
     async def get_column_types(self, table_name: str) -> dict[str, str]:
         table = self._quote_identifier(table_name)
