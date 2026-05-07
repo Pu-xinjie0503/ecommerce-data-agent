@@ -13,6 +13,33 @@ from app.entities.metric_info import MetricInfo
 from app.entities.table_info import TableInfo
 from app.entities.value_info import ValueInfo
 
+import json
+
+def normalize_examples(examples):
+    if examples is None:
+        return []
+
+    if isinstance(examples, list):
+        return examples
+
+    if isinstance(examples, tuple):
+        return list(examples)
+
+    if isinstance(examples, str):
+        text = examples.strip()
+
+        if not text:
+            return []
+
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return parsed
+            return [parsed]
+        except Exception:
+            return [text]
+
+    return [examples]
 
 async def merge_retrieved_info(
     state: DataAgentState,
@@ -73,8 +100,7 @@ async def merge_retrieved_info(
 
             column_info = retrieved_column_infos_map[column_id]
 
-            if column_info.examples is None:
-                column_info.examples = []
+            column_info.examples = normalize_examples(column_info.examples)
 
             if value not in column_info.examples:
                 column_info.examples.append(value)
@@ -124,7 +150,7 @@ async def merge_retrieved_info(
                     name=column_info.name,
                     type=column_info.type,
                     role=column_info.role,
-                    examples=column_info.examples,
+                    examples=normalize_examples(column_info.examples),
                     description=column_info.description,
                     alias=column_info.alias,
                 )
