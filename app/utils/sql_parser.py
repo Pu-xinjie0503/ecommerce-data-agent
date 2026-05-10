@@ -1,6 +1,12 @@
 import re
 
 
+MYSQL_OPTIMIZER_OUTPUT_PATTERN = re.compile(
+    r"/\*\s*select#\d+\s*\*/",
+    re.IGNORECASE,
+)
+
+
 DANGEROUS_SQL_PATTERN = re.compile(
     r"\b("
     r"insert|update|delete|drop|alter|truncate|create|replace|merge|"
@@ -22,6 +28,14 @@ def remove_markdown_code_fence(text: str) -> str:
         return match.group(1).strip()
 
     return text
+
+
+def cut_mysql_optimizer_output(sql: str) -> str:
+    match = MYSQL_OPTIMIZER_OUTPUT_PATTERN.search(sql)
+    if match:
+        return sql[: match.start()].strip()
+
+    return sql.strip()
 
 
 def split_first_statement(sql: str) -> str:
@@ -56,6 +70,7 @@ def extract_sql(raw_text: str) -> str:
         raise ValueError(f"没有找到 SELECT/WITH SQL: {raw_text}")
 
     sql = text[match.start() :].strip()
+    sql = cut_mysql_optimizer_output(sql)
     sql = split_first_statement(sql)
     sql = remove_sql_comments(sql)
     sql = re.sub(r"\s+", " ", sql).strip()

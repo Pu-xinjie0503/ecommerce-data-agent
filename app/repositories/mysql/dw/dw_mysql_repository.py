@@ -32,7 +32,12 @@ class DWMySQLRepository:
         """用 EXPLAIN 校验 SQL 是否能被数据库解析"""
 
         validate_sql = f"explain {sql}"
-        await self.session.execute(text(validate_sql))
+
+        try:
+            await self.session.execute(text("SET SESSION sql_notes = 0"))
+            await self.session.execute(text(validate_sql))
+        finally:
+            await self.session.execute(text("SET SESSION sql_notes = 1"))
 
 
     async def run(self, sql: str) -> list[dict]:
