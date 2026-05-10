@@ -3,6 +3,7 @@ from langgraph.runtime import Runtime
 from app.agent.context import DataAgentContext
 from app.agent.state import DataAgentState
 from app.core.log import logger
+from app.utils.sql_parser import extract_sql
 
 
 async def run_sql(
@@ -15,7 +16,7 @@ async def run_sql(
     writer({"type": "progress", "step": step, "status": "running"})
 
     try:
-        sql = state["sql"]
+        sql = extract_sql(state["sql"])
 
         dw_mysql_repository = runtime.context["dw_mysql_repository"]
 

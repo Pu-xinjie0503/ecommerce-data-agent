@@ -8,6 +8,7 @@ from app.agent.llm import llm
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.prompt.prompt_loader import load_prompt
+from app.utils.sql_parser import extract_sql
 
 
 async def generate_sql(
@@ -66,14 +67,16 @@ async def generate_sql(
             }
         )
 
-        result = result.strip()
+        raw_sql = result.strip()
+        clean_sql = extract_sql(raw_sql)
 
-        logger.info(f"生成的SQL：{result}")
+        logger.debug(f"LLM 原始 SQL 输出：{raw_sql}")
+        logger.info(f"生成的SQL：{clean_sql}")
 
         writer({"type": "progress", "step": step, "status": "success"})
 
         return {
-            "sql": result,
+            "sql": clean_sql,
         }
 
     except Exception as e:
