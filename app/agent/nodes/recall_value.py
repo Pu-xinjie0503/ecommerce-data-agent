@@ -16,6 +16,42 @@ from app.entities.value_info import ValueInfo
 from app.prompt.prompt_loader import load_prompt
 
 
+def normalize_value_candidates(texts: list[str]) -> list[str]:
+    suffixes = ["地区", "区域", "大区", "品牌"]
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    for text in texts:
+        if not text:
+            continue
+
+        value = str(text).strip()
+        if not value:
+            continue
+
+        normalized_values = [value]
+        for suffix in suffixes:
+            if value.endswith(suffix):
+                normalized_values.append(value.removesuffix(suffix).strip())
+
+        for normalized_value in normalized_values:
+            if normalized_value and normalized_value not in seen:
+                seen.add(normalized_value)
+                candidates.append(normalized_value)
+
+    return candidates
+
+
+def dedupe_value_infos(value_infos: list[ValueInfo]) -> list[ValueInfo]:
+    value_info_map: dict[str, ValueInfo] = {}
+
+    for value_info in value_infos:
+        if value_info.id not in value_info_map:
+            value_info_map[value_info.id] = value_info
+
+    return list(value_info_map.values())
+
+
 async def recall_value(
     state: DataAgentState,
     runtime: Runtime[DataAgentContext],
@@ -42,20 +78,24 @@ async def recall_value(
 
         extended_keywords = await chain.ainvoke({"query": query})
 
-        keywords = set(keywords + extended_keywords)
+        value_candidates = normalize_value_candidates([query] + keywords + extended_keywords)
+        logger.info(f"字段取值候选词: {value_candidates}")
 
-        value_info_map: dict[str, ValueInfo] = {}
+        exact_value_infos = await value_es_repository.search_exact_values(value_candidates)
 
-        for keyword in keywords:
-            current_value_infos: list[ValueInfo] = await value_es_repository.search(keyword)
+        if exact_value_infos:
+            retrieved_value_infos = dedupe_value_infos(exact_value_infos)
+            logger.info(f"字段取值精确命中: {[value_info.id for value_info in retrieved_value_infos]}")
+        else:
+            logger.info("字段取值精确匹配未命中，退回模糊召回")
+            fuzzy_value_infos: list[ValueInfo] = []
 
-            for value_info in current_value_infos:
-                if value_info.id not in value_info_map:
-                    value_info_map[value_info.id] = value_info
+            for keyword in value_candidates:
+                fuzzy_value_infos.extend(await value_es_repository.search(keyword))
 
-        retrieved_value_infos: list[ValueInfo] = list(value_info_map.values())
+            retrieved_value_infos = dedupe_value_infos(fuzzy_value_infos)
 
-        logger.info(f"检索到字段取值: {list(value_info_map.keys())}")
+        logger.info(f"检索到字段取值: {[value_info.id for value_info in retrieved_value_infos]}")
         writer({"type": "progress", "step": step, "status": "success"})
 
         return {"retrieved_value_infos": retrieved_value_infos}

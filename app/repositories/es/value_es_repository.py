@@ -57,6 +57,32 @@ class ValueESRepository:
                 refresh=True,
             )
 
+    async def search_exact_values(self, values: list[str], limit: int = 10) -> list[ValueInfo]:
+        if not values:
+            return []
+
+        result = await self.client.search(
+            index=self.index_name,
+            query={
+                "bool": {
+                    "should": [
+                        {
+                            "terms": {
+                                "value.keyword": values,
+                            }
+                        }
+                    ],
+                    "minimum_should_match": 1,
+                }
+            },
+            size=limit,
+        )
+
+        return [
+            ValueInfo(**hit["_source"])
+            for hit in result["hits"]["hits"]
+        ]
+
     async def search(self, query: str, limit: int = 5) -> list[ValueInfo]:
         result = await self.client.search(
             index=self.index_name,
