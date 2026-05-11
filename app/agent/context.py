@@ -8,6 +8,7 @@ Context 保存图执行过程中需要复用的外部依赖。
 from typing import TypedDict
 
 from app.clients.embedding_client_manager import EmbeddingClientManager
+from app.observability.trace_manager import TraceManager
 
 from app.repositories.es.value_es_repository import ValueESRepository
 from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
@@ -16,7 +17,7 @@ from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantReposit
 from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
 
 
-class DataAgentContext(TypedDict):
+class DataAgentContext(TypedDict, total=False):
     """LangGraph Runtime 中传递的上下文对象"""
 
     # 字段向量仓储
@@ -36,3 +37,9 @@ class DataAgentContext(TypedDict):
 
     # 数仓仓储，用于读取数据库方言、版本等执行环境信息
     dw_mysql_repository: DWMySQLRepository
+
+    # 请求 ID，用于关联日志和结构化 Trace
+    request_id: str
+
+    # 结构化 Trace 管理器
+    trace_manager: TraceManager

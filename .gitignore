@@ -42,3 +42,6 @@ frontend/.env.local
 
 # Eval runtime reports
 eval/reports/latest.*
+
+# Agent trace runtime files
+traces/

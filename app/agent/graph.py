@@ -19,9 +19,12 @@
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
+from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
 from app.agent.nodes.add_extra_context import add_extra_context
@@ -51,6 +54,30 @@ from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantReposit
 from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
 
 
+def trace_node(
+    name: str,
+    node_func: Callable[
+        [DataAgentState, Runtime[DataAgentContext]], Awaitable[dict[str, Any]]
+    ],
+):
+    async def wrapped_node(state: DataAgentState, runtime: Runtime[DataAgentContext]):
+        trace_manager = runtime.context.get("trace_manager")
+        if trace_manager is None:
+            return await node_func(state, runtime)
+
+        trace_manager.start_step(name, dict(state))
+        try:
+            output = await node_func(state, runtime)
+        except Exception as exc:
+            trace_manager.end_step(name, error=str(exc))
+            raise
+
+        trace_manager.end_step(name, output=output)
+        return output
+
+    return wrapped_node
+
+
 # StateGraph 声明整张图使用的状态结构和运行时上下文结构
 graph_builder = StateGraph(
     state_schema=DataAgentState,
@@ -59,19 +86,23 @@ graph_builder = StateGraph(
 
 
 # 注册节点：每个节点负责问数链路中的一个清晰步骤
-graph_builder.add_node("extract_keywords", extract_keywords)
-graph_builder.add_node("recall_column", recall_column)
-graph_builder.add_node("recall_value", recall_value)
-graph_builder.add_node("recall_metric", recall_metric)
-graph_builder.add_node("merge_retrieved_info", merge_retrieved_info)
+# trace_node 只做旁路可观测性记录，不改变节点输入输出语义
+graph_builder.add_node("extract_keywords", trace_node("extract_keywords", extract_keywords))
+graph_builder.add_node("recall_column", trace_node("recall_column", recall_column))
+graph_builder.add_node("recall_value", trace_node("recall_value", recall_value))
+graph_builder.add_node("recall_metric", trace_node("recall_metric", recall_metric))
+graph_builder.add_node(
+    "merge_retrieved_info",
+    trace_node("merge_retrieved_info", merge_retrieved_info),
+)
 
-graph_builder.add_node("filter_metric", filter_metric)
-graph_builder.add_node("filter_table", filter_table)
-graph_builder.add_node("add_extra_context", add_extra_context)
-graph_builder.add_node("generate_sql", generate_sql)
-graph_builder.add_node("validate_sql", validate_sql)
-graph_builder.add_node("correct_sql", correct_sql)
-graph_builder.add_node("run_sql", run_sql)
+graph_builder.add_node("filter_metric", trace_node("filter_metric", filter_metric))
+graph_builder.add_node("filter_table", trace_node("filter_table", filter_table))
+graph_builder.add_node("add_extra_context", trace_node("add_extra_context", add_extra_context))
+graph_builder.add_node("generate_sql", trace_node("generate_sql", generate_sql))
+graph_builder.add_node("validate_sql", trace_node("validate_sql", validate_sql))
+graph_builder.add_node("correct_sql", trace_node("correct_sql", correct_sql))
+graph_builder.add_node("run_sql", trace_node("run_sql", run_sql))
 
 
 # 从用户问题开始，先抽取关键词作为后续检索基础

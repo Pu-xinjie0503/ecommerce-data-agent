@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,8 @@ import yaml
 from app.agent.context import DataAgentContext
 from app.agent.graph import graph
 from app.agent.state import DataAgentState
+from app.core.context import request_id_ctx_var
+from app.observability.trace_manager import TraceManager
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
 from app.clients.mysql_client_manager import (
@@ -34,6 +37,12 @@ LATEST_MD_PATH = REPORTS_DIR / "latest.md"
 
 class EvalConfigError(ValueError):
     pass
+
+
+class EvalQueryError(RuntimeError):
+    def __init__(self, message: str, trace_path: str):
+        super().__init__(message)
+        self.trace_path = trace_path
 
 
 def load_cases() -> list[dict[str, Any]]:
@@ -141,7 +150,7 @@ async def close_clients() -> None:
     await dw_mysql_client_manager.close()
 
 
-async def run_agent_query(query: str) -> dict[str, Any]:
+async def run_agent_query(query: str, case_id: str) -> dict[str, Any]:
     if qdrant_client_manager.client is None:
         raise RuntimeError("Qdrant client 未初始化")
     if es_client_manager.client is None:
@@ -151,38 +160,59 @@ async def run_agent_query(query: str) -> dict[str, Any]:
     if dw_mysql_client_manager.session_factory is None:
         raise RuntimeError("DW MySQL session_factory 未初始化")
 
-    async with (
-        meta_mysql_client_manager.session_factory() as meta_session,
-        dw_mysql_client_manager.session_factory() as dw_session,
-    ):
-        context = DataAgentContext(
-            column_qdrant_repository=ColumnQdrantRepository(qdrant_client_manager.client),
-            embedding_client=embedding_client_manager,
-            metric_qdrant_repository=MetricQdrantRepository(qdrant_client_manager.client),
-            value_es_repository=ValueESRepository(es_client_manager.client),
-            meta_mysql_repository=MetaMySQLRepository(meta_session),
-            dw_mysql_repository=DWMySQLRepository(dw_session),
-        )
-        state = DataAgentState(query=query)
-        final_state: dict[str, Any] = {}
+    request_id = f"eval-{case_id}-{uuid.uuid4().hex[:8]}"
+    request_id_token = request_id_ctx_var.set(request_id)
+    trace_manager = TraceManager(request_id=request_id, query=query)
 
-        async for chunk in graph.astream(
-            input=state,
-            context=context,
-            stream_mode="values",
+    try:
+        async with (
+            meta_mysql_client_manager.session_factory() as meta_session,
+            dw_mysql_client_manager.session_factory() as dw_session,
         ):
-            final_state = dict(chunk)
+            context = DataAgentContext(
+                column_qdrant_repository=ColumnQdrantRepository(qdrant_client_manager.client),
+                embedding_client=embedding_client_manager,
+                metric_qdrant_repository=MetricQdrantRepository(qdrant_client_manager.client),
+                value_es_repository=ValueESRepository(es_client_manager.client),
+                meta_mysql_repository=MetaMySQLRepository(meta_session),
+                dw_mysql_repository=DWMySQLRepository(dw_session),
+                request_id=request_id,
+                trace_manager=trace_manager,
+            )
+            state = DataAgentState(query=query)
+            final_state: dict[str, Any] = {}
 
-        return final_state
+            async for chunk in graph.astream(
+                input=state,
+                context=context,
+                stream_mode="values",
+            ):
+                final_state = dict(chunk)
+
+            trace_manager.finish("success")
+            trace_path = trace_manager.save()
+            return {"final_state": final_state, "trace_path": trace_path}
+    except Exception as exc:
+        trace_manager.finish("failed")
+        trace_path = trace_manager.save()
+        raise EvalQueryError(str(exc), trace_path) from exc
+    finally:
+        request_id_ctx_var.reset(request_id_token)
 
 
 async def run_case(case: dict[str, Any]) -> dict[str, Any]:
     started_at = time.perf_counter()
     final_state: dict[str, Any] = {}
+    trace_path = ""
     exception: str | None = None
 
     try:
-        final_state = await run_agent_query(case["query"])
+        agent_result = await run_agent_query(case["query"], case["id"])
+        final_state = agent_result["final_state"]
+        trace_path = agent_result["trace_path"]
+    except EvalQueryError as exc:
+        exception = str(exc)
+        trace_path = exc.trace_path
     except Exception as exc:
         exception = str(exc)
 
@@ -210,6 +240,7 @@ async def run_case(case: dict[str, Any]) -> dict[str, Any]:
         "sql": normalize_sql(sql),
         "result_preview": result_preview(result),
         "result_row_count": result_row_count(result),
+        "trace_path": trace_path,
         "duration_ms": duration_ms,
         "error": exception or state_error,
     }
@@ -254,8 +285,8 @@ def write_markdown_report(report: dict[str, Any]) -> None:
         "",
         "## Case 明细",
         "",
-        "| id | difficulty | status | duration_ms | reasons |",
-        "|---|---|---|---:|---|",
+        "| id | difficulty | status | duration_ms | trace_path | reasons |",
+        "|---|---|---|---:|---|---|",
     ]
 
     for item in report["cases"]:
@@ -263,7 +294,7 @@ def write_markdown_report(report: dict[str, Any]) -> None:
         reasons = "；".join(item["reasons"]) if item["reasons"] else "-"
         lines.append(
             f"| {item['id']} | {item['difficulty']} | {status} | "
-            f"{item['duration_ms']} | {reasons} |"
+            f"{item['duration_ms']} | {item.get('trace_path') or '-'} | {reasons} |"
         )
 
     failed_cases = [item for item in report["cases"] if not item["passed"]]
@@ -276,6 +307,8 @@ def write_markdown_report(report: dict[str, Any]) -> None:
                     "",
                     "失败原因：",
                     *[f"- {reason}" for reason in item["reasons"]],
+                    "",
+                    f"Trace：{item.get('trace_path') or '-'}",
                     "",
                     "SQL：",
                     "",
@@ -307,7 +340,7 @@ def print_case_report(case_report: dict[str, Any]) -> None:
     status = "PASS" if case_report["passed"] else "FAIL"
     print(
         f"[{status}] {case_report['id']} {case_report['query']} "
-        f"({case_report['duration_ms']} ms)"
+        f"({case_report['duration_ms']} ms) trace={case_report.get('trace_path') or '-'}"
     )
     for reason in case_report["reasons"]:
         print(f"  - {reason}")

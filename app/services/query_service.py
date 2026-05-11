@@ -6,12 +6,15 @@
 """
 
 import json
+import uuid
 
 from app.clients.embedding_client_manager import EmbeddingClientManager
 
 from app.agent.context import DataAgentContext
 from app.agent.graph import graph
 from app.agent.state import DataAgentState
+from app.core.context import request_id_ctx_var
+from app.observability.trace_manager import TraceManager
 from app.repositories.es.value_es_repository import ValueESRepository
 from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
 from app.repositories.mysql.meta.meta_mysql_repository import MetaMySQLRepository
@@ -42,6 +45,9 @@ class QueryService:
     async def query(self, query: str):
         """执行一次问数工作流，并逐段产出 SSE 消息"""
 
+        request_id = uuid.uuid4().hex
+        request_id_token = request_id_ctx_var.set(request_id)
+        trace_manager = TraceManager(request_id=request_id, query=query)
         state = DataAgentState(query=query)
 
         context = DataAgentContext(
@@ -51,6 +57,8 @@ class QueryService:
             value_es_repository=self.value_es_repository,
             meta_mysql_repository=self.meta_mysql_repository,
             dw_mysql_repository=self.dw_mysql_repository,
+            request_id=request_id,
+            trace_manager=trace_manager,
         )
 
         try:
@@ -61,9 +69,16 @@ class QueryService:
             ):
                 yield f"data: {json.dumps(chunk, ensure_ascii=False, default=str)}\n\n"
 
+            trace_manager.finish("success")
+            trace_manager.save()
+
         except Exception as e:
+            trace_manager.finish("failed")
+            trace_manager.save()
             error = {
                 "type": "error",
                 "message": str(e),
             }
             yield f"data: {json.dumps(error, ensure_ascii=False, default=str)}\n\n"
+        finally:
+            request_id_ctx_var.reset(request_id_token)
