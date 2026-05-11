@@ -1,0 +1,321 @@
+cases:
+  - id: p2_001
+    query: 华北地区的总销售额
+    expected_tables:
+      - fact_order
+    expected_metrics:
+      - 销售额
+    expected_values:
+      - 华北
+    must_contain_sql:
+      - 华北
+    forbidden_sql: []
+    difficulty: easy
+    description: 验证大区字段值 exact-first 召回和销售额指标生成。
+
+  - id: p2_002
+    query: 华东地区的总销售额
+    expected_tables:
+      - fact_order
+    expected_metrics:
+      - 销售额
+    expected_values:
+      - 华东
+    must_contain_sql:
+      - 华东
+    forbidden_sql:
+      - 华北
+    difficulty: easy
+    description: 验证华东大区过滤不会误用华北。
+
+  - id: p2_003
+    query: 统计华南大区的订单数
+    expected_tables:
+      - fact_order
+    expected_metrics:
+      - 订单数
+    expected_values:
+      - 华南
+    must_contain_sql:
+      - 华南
+    forbidden_sql:
+      - 华北
+      - 华东
+    difficulty: easy
+    description: 验证华南大区过滤和订单数指标生成。
+
+  - id: p2_004
+    query: 统计美的品牌的销售额
+    expected_tables:
+      - fact_order
+      - dim_product
+    expected_metrics:
+      - 销售额
+    expected_values:
+      - 美的
+    must_contain_sql:
+      - 美的
+    forbidden_sql:
+      - 华北
+      - 华东
+    difficulty: easy
+    description: 验证品牌字段值召回和销售额指标生成。
+
+  - id: p2_005
+    query: 统计食品饮料品类的销售额
+    expected_tables:
+      - fact_order
+      - dim_product
+    expected_metrics:
+      - 销售额
+    expected_values:
+      - 食品饮料
+    must_contain_sql:
+      - 食品饮料
+    forbidden_sql:
+      - 手机数码
+    difficulty: easy
+    description: 验证商品品类字段值召回和销售额指标生成。
+
+  - id: p2_006
+    query: 统计手机数码品类的销量
+    expected_tables:
+      - fact_order
+      - dim_product
+    expected_metrics:
+      - 销量
+    expected_values:
+      - 手机数码
+    must_contain_sql:
+      - 手机数码
+    forbidden_sql:
+      - 食品饮料
+    difficulty: easy
+    description: 验证手机数码品类过滤和销量指标生成。
+
+  - id: p2_007
+    query: 按会员等级统计 2025 年第一季度的订单数和销售额
+    expected_tables:
+      - fact_order
+      - dim_user
+    expected_metrics:
+      - 订单数
+      - 销售额
+    expected_values:
+      - 2025
+      - Q1
+    must_contain_sql:
+      - GROUP BY
+      - 2025
+      - Q1
+    forbidden_sql:
+      - 2024-
+    difficulty: medium
+    description: 验证会员等级分组、季度日期边界和双指标生成。
+
+  - id: p2_008
+    query: 统计 2025 年 3 月各商品品类的销量和销售额
+    expected_tables:
+      - fact_order
+      - dim_product
+    expected_metrics:
+      - 销量
+      - 销售额
+    expected_values:
+      - 20250301
+      - 20250331
+    must_contain_sql:
+      - GROUP BY
+      - 20250301
+      - 20250331
+    forbidden_sql:
+      - 2025-02
+    difficulty: medium
+    description: 验证月度日期过滤、商品品类分组和多指标生成。
+
+  - id: p2_009
+    query: 统计 2025 年第一季度各大区的 GMV，并按 GMV 从高到低排序
+    expected_tables:
+      - fact_order
+    expected_metrics:
+      - GMV
+    expected_values:
+      - 2025
+      - Q1
+    must_contain_sql:
+      - GROUP BY
+      - ORDER BY
+      - DESC
+      - 2025
+      - Q1
+    forbidden_sql:
+      - ASC
+    difficulty: medium
+    description: 验证季度日期过滤、大区分组和 GMV 降序排序。
+
+  - id: p2_010
+    query: 统计华北地区美的品牌的销售额
+    expected_tables:
+      - fact_order
+      - dim_product
+    expected_metrics:
+      - 销售额
+    expected_values:
+      - 华北
+      - 美的
+    must_contain_sql:
+      - 华北
+      - 美的
+    forbidden_sql:
+      - 华东
+    difficulty: medium
+    description: 验证大区和品牌两个过滤条件同时生效。
+
+  - id: p2_011
+    query: 统计华东地区食品饮料品类的销量
+    expected_tables:
+      - fact_order
+      - dim_product
+    expected_metrics:
+      - 销量
+    expected_values:
+      - 华东
+      - 食品饮料
+    must_contain_sql:
+      - 华东
+      - 食品饮料
+    forbidden_sql:
+      - 华北
+      - 手机数码
+    difficulty: medium
+    description: 验证大区和商品品类组合过滤。
+
+  - id: p2_012
+    query: 统计 2025 年第一季度华南大区的销售额
+    expected_tables:
+      - fact_order
+    expected_metrics:
+      - 销售额
+    expected_values:
+      - 华南
+      - 2025
+      - Q1
+    must_contain_sql:
+      - 华南
+      - 2025
+      - Q1
+    forbidden_sql:
+      - 2024-
+    difficulty: medium
+    description: 验证日期范围和大区过滤组合。
+
+  - id: p2_013
+    query: 统计 2025 年 3 月的销售额
+    expected_tables:
+      - fact_order
+    expected_metrics:
+      - 销售额
+    expected_values:
+      - 20250301
+      - 20250331
+    must_contain_sql:
+      - 20250301
+      - 20250331
+    forbidden_sql:
+      - GROUP BY
+    difficulty: easy
+    description: 验证单月销售额统计不应额外引入分组。
+
+  - id: p2_014
+    query: 统计销售额
+    expected_tables:
+      - fact_order
+    expected_metrics:
+      - 销售额
+    expected_values: []
+    must_contain_sql:
+      - SELECT
+    forbidden_sql:
+      - 华北
+      - 华东
+      - 华南
+    difficulty: easy
+    description: 验证泛问销售额时不应凭空添加地区过滤。
+
+  - id: p2_015
+    query: 对比华北和华东的销售额
+    expected_tables:
+      - fact_order
+    expected_metrics:
+      - 销售额
+    expected_values:
+      - 华北
+      - 华东
+    must_contain_sql:
+      - 华北
+      - 华东
+      - GROUP BY
+    forbidden_sql:
+      - 华南
+    difficulty: medium
+    description: 验证多地区对比问法能同时保留两个地区值。
+
+  - id: p2_016
+    query: 统计 2025 年第一季度美的品牌的订单数
+    expected_tables:
+      - fact_order
+      - dim_product
+    expected_metrics:
+      - 订单数
+    expected_values:
+      - 美的
+      - 2025
+      - Q1
+    must_contain_sql:
+      - 美的
+      - 2025
+      - Q1
+    forbidden_sql:
+      - 华北
+    difficulty: medium
+    description: 验证品牌过滤、季度日期过滤和订单数指标组合。
+
+  - id: p2_017
+    query: 按大区统计食品饮料品类的销售额
+    expected_tables:
+      - fact_order
+      - dim_product
+    expected_metrics:
+      - 销售额
+    expected_values:
+      - 食品饮料
+    must_contain_sql:
+      - 食品饮料
+      - GROUP BY
+    forbidden_sql:
+      - 手机数码
+    difficulty: medium
+    description: 验证固定品类过滤下按大区分组统计。
+
+  - id: p2_018
+    query: 统计 2025 年 3 月华北地区手机数码品类的销量
+    expected_tables:
+      - fact_order
+      - dim_product
+    expected_metrics:
+      - 销量
+    expected_values:
+      - 华北
+      - 手机数码
+      - 20250301
+      - 20250331
+    must_contain_sql:
+      - 华北
+      - 手机数码
+      - 20250301
+      - 20250331
+    forbidden_sql:
+      - 华东
+      - 食品饮料
+    difficulty: hard
+    description: 验证日期、大区、品类三个过滤条件同时生效。

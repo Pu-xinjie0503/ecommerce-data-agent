@@ -1,0 +1,432 @@
+{
+  "generated_at": "2026-05-11T18:50:04",
+  "summary": {
+    "total": 18,
+    "passed": 18,
+    "failed": 0,
+    "pass_rate": 100.0,
+    "duration_seconds": 72.31
+  },
+  "cases": [
+    {
+      "id": "p2_001",
+      "query": "华北地区的总销售额",
+      "difficulty": "easy",
+      "description": "验证大区字段值 exact-first 召回和销售额指标生成。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT SUM(t2.order_amount) AS total_sales FROM dim_region t1 JOIN fact_order t2 ON t1.region_id = t2.region_id WHERE t1.region_name = '华北'",
+      "result_preview": [
+        {
+          "total_sales": 41099.5
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 4046.02,
+      "error": null
+    },
+    {
+      "id": "p2_002",
+      "query": "华东地区的总销售额",
+      "difficulty": "easy",
+      "description": "验证华东大区过滤不会误用华北。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT SUM(t2.order_amount) AS total_sales FROM dim_region t1 JOIN fact_order t2 ON t1.region_id = t2.region_id WHERE t1.region_name = '华东'",
+      "result_preview": [
+        {
+          "total_sales": 107373.0
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 3513.66,
+      "error": null
+    },
+    {
+      "id": "p2_003",
+      "query": "统计华南大区的订单数",
+      "difficulty": "easy",
+      "description": "验证华南大区过滤和订单数指标生成。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT COUNT(*) AS order_count FROM fact_order fo JOIN dim_region dr ON fo.region_id = dr.region_id WHERE dr.region_name = '华南'",
+      "result_preview": [
+        {
+          "order_count": 26
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 3145.83,
+      "error": null
+    },
+    {
+      "id": "p2_004",
+      "query": "统计美的品牌的销售额",
+      "difficulty": "easy",
+      "description": "验证品牌字段值召回和销售额指标生成。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT SUM(t2.order_amount) AS total_sales FROM dim_product t1 JOIN fact_order t2 ON t1.product_id = t2.product_id WHERE t1.brand = '美的'",
+      "result_preview": [
+        {
+          "total_sales": 22400.0
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 2970.37,
+      "error": null
+    },
+    {
+      "id": "p2_005",
+      "query": "统计食品饮料品类的销售额",
+      "difficulty": "easy",
+      "description": "验证商品品类字段值召回和销售额指标生成。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT SUM(t1.order_amount) AS total_sales FROM fact_order t1 JOIN dim_product t2 ON t1.product_id = t2.product_id WHERE t2.category = '食品饮料'",
+      "result_preview": [
+        {
+          "total_sales": 2490.0
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 3228.19,
+      "error": null
+    },
+    {
+      "id": "p2_006",
+      "query": "统计手机数码品类的销量",
+      "difficulty": "easy",
+      "description": "验证手机数码品类过滤和销量指标生成。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT SUM(t1.order_quantity) AS total_sales FROM fact_order t1 JOIN dim_product t2 ON t1.product_id = t2.product_id WHERE t2.category = '手机数码'",
+      "result_preview": [
+        {
+          "total_sales": "29"
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 3470.37,
+      "error": null
+    },
+    {
+      "id": "p2_007",
+      "query": "按会员等级统计 2025 年第一季度的订单数和销售额",
+      "difficulty": "medium",
+      "description": "验证会员等级分组、季度日期边界和双指标生成。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT dc.member_level AS member_level, COUNT(*) AS order_count, SUM(fo.order_amount) AS total_sales FROM fact_order fo JOIN dim_customer dc ON fo.customer_id = dc.customer_id JOIN dim_date dd ON fo.date_id = dd.date_id WHERE dd.year = 2025 AND dd.quarter = 'Q1' GROUP BY dc.member_level",
+      "result_preview": [
+        {
+          "member_level": "黄金",
+          "order_count": 34,
+          "total_sales": 100178.5
+        },
+        {
+          "member_level": "铂金",
+          "order_count": 25,
+          "total_sales": 57679.0
+        },
+        {
+          "member_level": "青铜",
+          "order_count": 26,
+          "total_sales": 50208.0
+        },
+        {
+          "member_level": "白银",
+          "order_count": 30,
+          "total_sales": 71094.0
+        }
+      ],
+      "result_row_count": 4,
+      "duration_ms": 4782.03,
+      "error": null
+    },
+    {
+      "id": "p2_008",
+      "query": "统计 2025 年 3 月各商品品类的销量和销售额",
+      "difficulty": "medium",
+      "description": "验证月度日期过滤、商品品类分组和多指标生成。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT dp.category AS category, SUM(fo.order_quantity) AS total_quantity, SUM(fo.order_amount) AS total_sales FROM fact_order fo JOIN dim_product dp ON fo.product_id = dp.product_id JOIN dim_date dd ON fo.date_id = dd.date_id WHERE dd.date_id >= 20250301 AND dd.date_id <= 20250331 GROUP BY dp.category",
+      "result_preview": [
+        {
+          "category": "手机数码",
+          "total_quantity": "10",
+          "total_sales": 62190.0
+        },
+        {
+          "category": "食品饮料",
+          "total_quantity": "139",
+          "total_sales": 1115.0
+        },
+        {
+          "category": "休闲零食",
+          "total_quantity": "156",
+          "total_sales": 630.0
+        },
+        {
+          "category": "鞋靴",
+          "total_quantity": "4",
+          "total_sales": 4396.0
+        },
+        {
+          "category": "服饰",
+          "total_quantity": "7",
+          "total_sales": 2593.0
+        }
+      ],
+      "result_row_count": 6,
+      "duration_ms": 5014.85,
+      "error": null
+    },
+    {
+      "id": "p2_009",
+      "query": "统计 2025 年第一季度各大区的 GMV，并按 GMV 从高到低排序",
+      "difficulty": "medium",
+      "description": "验证季度日期过滤、大区分组和 GMV 降序排序。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT r.region_name AS region, SUM(o.order_amount) AS total_sales FROM fact_order o JOIN dim_date d ON o.date_id = d.date_id JOIN dim_region r ON o.region_id = r.region_id WHERE d.year = 2025 AND d.quarter = 'Q1' GROUP BY r.region_name ORDER BY total_sales DESC",
+      "result_preview": [
+        {
+          "region": "华东",
+          "total_sales": 107373.0
+        },
+        {
+          "region": "华南",
+          "total_sales": 70202.0
+        },
+        {
+          "region": "华北",
+          "total_sales": 41099.5
+        },
+        {
+          "region": "西南",
+          "total_sales": 31528.0
+        },
+        {
+          "region": "华中",
+          "total_sales": 28957.0
+        }
+      ],
+      "result_row_count": 5,
+      "duration_ms": 4096.79,
+      "error": null
+    },
+    {
+      "id": "p2_010",
+      "query": "统计华北地区美的品牌的销售额",
+      "difficulty": "medium",
+      "description": "验证大区和品牌两个过滤条件同时生效。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT SUM(t2.order_amount) AS total_sales FROM fact_order t2 JOIN dim_product t1 ON t2.product_id = t1.product_id JOIN dim_region t3 ON t2.region_id = t3.region_id WHERE t1.brand = '美的' AND t3.region_name = '华北'",
+      "result_preview": [
+        {
+          "total_sales": 3200.0
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 3877.42,
+      "error": null
+    },
+    {
+      "id": "p2_011",
+      "query": "统计华东地区食品饮料品类的销量",
+      "difficulty": "medium",
+      "description": "验证大区和商品品类组合过滤。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT SUM(t1.order_quantity) AS total_sales FROM fact_order t1 JOIN dim_product t2 ON t1.product_id = t2.product_id JOIN dim_region t3 ON t1.region_id = t3.region_id WHERE t3.region_name = '华东' AND t2.category = '食品饮料'",
+      "result_preview": [
+        {
+          "total_sales": "71"
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 4586.86,
+      "error": null
+    },
+    {
+      "id": "p2_012",
+      "query": "统计 2025 年第一季度华南大区的销售额",
+      "difficulty": "medium",
+      "description": "验证日期范围和大区过滤组合。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT SUM(t1.order_amount) AS total_sales FROM fact_order t1 JOIN dim_date t2 ON t1.date_id = t2.date_id JOIN dim_region t3 ON t1.region_id = t3.region_id WHERE t2.year = 2025 AND t2.quarter = 'Q1' AND t3.region_name = '华南'",
+      "result_preview": [
+        {
+          "total_sales": 70202.0
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 4446.18,
+      "error": null
+    },
+    {
+      "id": "p2_013",
+      "query": "统计 2025 年 3 月的销售额",
+      "difficulty": "easy",
+      "description": "验证单月销售额统计不应额外引入分组。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT SUM(order_amount) AS total_sales FROM fact_order WHERE date_id >= 20250301 AND date_id <= 20250331",
+      "result_preview": [
+        {
+          "total_sales": 90120.0
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 2990.99,
+      "error": null
+    },
+    {
+      "id": "p2_014",
+      "query": "统计销售额",
+      "difficulty": "easy",
+      "description": "验证泛问销售额时不应凭空添加地区过滤。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT SUM(order_amount) AS total_sales FROM fact_order",
+      "result_preview": [
+        {
+          "total_sales": 279159.5
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 2736.65,
+      "error": null
+    },
+    {
+      "id": "p2_015",
+      "query": "对比华北和华东的销售额",
+      "difficulty": "medium",
+      "description": "验证多地区对比问法能同时保留两个地区值。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT r.region_name, SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_region r ON f.region_id = r.region_id WHERE r.region_name IN ('华北', '华东') GROUP BY r.region_name",
+      "result_preview": [
+        {
+          "region_name": "华东",
+          "total_sales": 107373.0
+        },
+        {
+          "region_name": "华北",
+          "total_sales": 41099.5
+        }
+      ],
+      "result_row_count": 2,
+      "duration_ms": 3466.64,
+      "error": null
+    },
+    {
+      "id": "p2_016",
+      "query": "统计 2025 年第一季度美的品牌的订单数",
+      "difficulty": "medium",
+      "description": "验证品牌过滤、季度日期过滤和订单数指标组合。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT COUNT(*) AS order_count FROM fact_order fo JOIN dim_product dp ON fo.product_id = dp.product_id JOIN dim_date dd ON fo.date_id = dd.date_id WHERE dp.brand = '美的' AND dd.year = 2025 AND dd.quarter = 'Q1'",
+      "result_preview": [
+        {
+          "order_count": 7
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 5687.23,
+      "error": null
+    },
+    {
+      "id": "p2_017",
+      "query": "按大区统计食品饮料品类的销售额",
+      "difficulty": "medium",
+      "description": "验证固定品类过滤下按大区分组统计。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT r.region_name AS region, SUM(o.order_amount) AS total_sales FROM fact_order o JOIN dim_region r ON o.region_id = r.region_id JOIN dim_product p ON o.product_id = p.product_id WHERE p.category = '食品饮料' GROUP BY r.region_name",
+      "result_preview": [
+        {
+          "region": "华东",
+          "total_sales": 875.0
+        },
+        {
+          "region": "西南",
+          "total_sales": 455.0
+        },
+        {
+          "region": "华北",
+          "total_sales": 345.0
+        },
+        {
+          "region": "华南",
+          "total_sales": 450.0
+        },
+        {
+          "region": "华中",
+          "total_sales": 365.0
+        }
+      ],
+      "result_row_count": 5,
+      "duration_ms": 3984.81,
+      "error": null
+    },
+    {
+      "id": "p2_018",
+      "query": "统计 2025 年 3 月华北地区手机数码品类的销量",
+      "difficulty": "hard",
+      "description": "验证日期、大区、品类三个过滤条件同时生效。",
+      "passed": true,
+      "reasons": [],
+      "sql_generated": true,
+      "sql_executed": true,
+      "sql": "SELECT SUM(t1.order_quantity) AS total_sales FROM fact_order t1 JOIN dim_product t2 ON t1.product_id = t2.product_id JOIN dim_region t3 ON t1.region_id = t3.region_id JOIN dim_date t4 ON t1.date_id = t4.date_id WHERE t2.category = '手机数码' AND t3.region_name = '华北' AND t4.date_id >= 20250301 AND t4.date_id <= 20250331",
+      "result_preview": [
+        {
+          "total_sales": "2"
+        }
+      ],
+      "result_row_count": 1,
+      "duration_ms": 6153.3,
+      "error": null
+    }
+  ]
+}
