@@ -5,7 +5,7 @@ State 是 LangGraph 各节点之间传递和更新的共享数据。
 第 11 章新增关键词列表、三路召回结果，以及合并后的表上下文和指标上下文。
 """
 
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from app.entities.column_info import ColumnInfo
 from app.entities.metric_info import MetricInfo
@@ -61,6 +61,19 @@ class DataAgentState(TypedDict, total=False):
 
     # 用户输入
     query: str
+
+    # 输入侧安全检查
+    is_safe: bool
+    risk_level: Literal["low", "medium", "high"]
+    risk_type: Literal[
+        "normal_query",
+        "prompt_injection",
+        "dangerous_sql",
+        "sensitive_data_request",
+        "write_or_destructive_operation",
+    ]
+    guard_reason: str
+    final_answer: str
 
     # 关键词抽取结果
     keywords: list[str]

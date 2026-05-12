@@ -33,6 +33,7 @@ from app.agent.nodes.extract_keywords import extract_keywords
 from app.agent.nodes.filter_metric import filter_metric
 from app.agent.nodes.filter_table import filter_table
 from app.agent.nodes.generate_sql import generate_sql
+from app.agent.nodes.guard_query import guard_query
 from app.agent.nodes.merge_retrieved_info import merge_retrieved_info
 from app.agent.nodes.recall_column import recall_column
 from app.agent.nodes.recall_metric import recall_metric
@@ -87,6 +88,7 @@ graph_builder = StateGraph(
 
 # 注册节点：每个节点负责问数链路中的一个清晰步骤
 # trace_node 只做旁路可观测性记录，不改变节点输入输出语义
+graph_builder.add_node("guard_query", trace_node("guard_query", guard_query))
 graph_builder.add_node("extract_keywords", trace_node("extract_keywords", extract_keywords))
 graph_builder.add_node("recall_column", trace_node("recall_column", recall_column))
 graph_builder.add_node("recall_value", trace_node("recall_value", recall_value))
@@ -105,8 +107,17 @@ graph_builder.add_node("correct_sql", trace_node("correct_sql", correct_sql))
 graph_builder.add_node("run_sql", trace_node("run_sql", run_sql))
 
 
-# 从用户问题开始，先抽取关键词作为后续检索基础
-graph_builder.add_edge(START, "extract_keywords")
+# 从用户问题开始，先做输入侧安全检查
+# 安全请求继续抽取关键词；不安全请求直接结束，不进入后续 Agent 链路
+graph_builder.add_edge(START, "guard_query")
+graph_builder.add_conditional_edges(
+    source="guard_query",
+    path=lambda state: "extract_keywords" if state["is_safe"] else END,
+    path_map={
+        "extract_keywords": "extract_keywords",
+        END: END,
+    },
+)
 
 
 # 关键词抽取后，并行进入三类召回
