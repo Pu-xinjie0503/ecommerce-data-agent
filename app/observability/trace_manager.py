@@ -49,6 +49,10 @@ class TraceManager:
             "input_summary": summarize_payload(state),
             "output_summary": {},
             "error_message": None,
+            "error_type": None,
+            "error_node": None,
+            "recoverable": None,
+            "suggested_action": None,
         }
         self.record["steps"].append(step)
         self._running_steps[name] = (step, time.perf_counter())
@@ -68,6 +72,11 @@ class TraceManager:
         step["duration_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
         step["output_summary"] = summarize_payload(output or {})
         step["error_message"] = error
+        if isinstance(output, dict):
+            step["error_type"] = output.get("error_type")
+            step["error_node"] = output.get("error_node")
+            step["recoverable"] = output.get("recoverable")
+            step["suggested_action"] = output.get("suggested_action")
 
     def finish(self, status: TraceStatus = "success") -> None:
         self.record["status"] = status
@@ -134,7 +143,31 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
         if key in payload:
             summary[key] = safe_jsonable(payload.get(key))
 
+    for key in (
+        "need_clarification",
+        "clarification_type",
+        "clarification_question",
+        "clarification_options",
+    ):
+        if key in payload:
+            summary[key] = safe_jsonable(payload.get(key))
+
     for key in ("date_info", "db_info", "sql", "error"):
+        if key in payload:
+            summary[key] = safe_jsonable(payload.get(key))
+
+    for key in (
+        "success",
+        "error_type",
+        "error_message",
+        "error_node",
+        "recoverable",
+        "suggested_action",
+        "warning_type",
+        "warning_message",
+        "missing_values",
+        "matched_values",
+    ):
         if key in payload:
             summary[key] = safe_jsonable(payload.get(key))
 

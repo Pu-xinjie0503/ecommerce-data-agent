@@ -1,6 +1,7 @@
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
+from app.agent.errors import AgentErrorType, build_error_state, clear_error_state
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
@@ -29,6 +30,7 @@ async def validate_sql(
             return {
                 "sql": sql,
                 "error": None,
+                **clear_error_state(success=True),
             }
 
         except Exception as e:
@@ -37,6 +39,13 @@ async def validate_sql(
 
             return {
                 "error": str(e),
+                **build_error_state(
+                    error_type=AgentErrorType.SQL_VALIDATION_FAILED,
+                    error_message=str(e),
+                    error_node="validate_sql",
+                    recoverable=True,
+                    suggested_action="try_correct_sql",
+                ),
             }
 
     except Exception as e:

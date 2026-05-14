@@ -17,7 +17,7 @@ import { EmptyState } from "./components/EmptyState";
 import { MessageBubble } from "./components/MessageBubble";
 import { streamQuery } from "./lib/agentApi";
 import { cn, summarizeResult } from "./lib/format";
-import type { AgentEvent, ChatMessage, StepState } from "./types/agent";
+import type { AgentEvent, ChatMessage, ClarificationPayload, StepState } from "./types/agent";
 
 const examples = [
   "统计 2025 年第一季度各大区的 GMV，并按 GMV 从高到低排序",
@@ -40,6 +40,40 @@ function upsertStep(steps: StepState[] = [], event: Extract<AgentEvent, { type: 
     updatedAt: Date.now(),
   });
   return next;
+}
+
+function isClarificationEvent(event: AgentEvent) {
+  if (event.type === "clarification") return true;
+  if (event.type === "final") {
+    return event.need_clarification === true || event.status === "need_clarification";
+  }
+  if (event.type === "result" && isRecord(event.data)) {
+    return event.data.need_clarification === true || event.data.status === "need_clarification";
+  }
+  return false;
+}
+
+function getClarificationPayload(event: AgentEvent): ClarificationPayload {
+  const payload = event.type === "clarification" || event.type === "result" ? event.data : event;
+  if (!isRecord(payload)) {
+    return {};
+  }
+
+  return {
+    need_clarification: payload.need_clarification === true,
+    status: typeof payload.status === "string" ? payload.status : undefined,
+    clarification_type:
+      typeof payload.clarification_type === "string" ? payload.clarification_type : null,
+    clarification_question:
+      typeof payload.clarification_question === "string" ? payload.clarification_question : null,
+    clarification_options: Array.isArray(payload.clarification_options)
+      ? payload.clarification_options.filter((item): item is string => typeof item === "string")
+      : [],
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 export default function App() {
@@ -94,6 +128,18 @@ export default function App() {
         current.map((message) => {
           if (message.id !== assistantId) return message;
 
+          if (isClarificationEvent(event)) {
+            const clarification = getClarificationPayload(event);
+            return {
+              ...message,
+              status: "done",
+              content: "我需要进一步确认你的查询条件：",
+              clarification,
+              result: undefined,
+              error: undefined,
+            };
+          }
+
           if (event.type === "progress") {
             return {
               ...message,
@@ -105,18 +151,32 @@ export default function App() {
           if (event.type === "result") {
             return {
               ...message,
-              status: "done",
               content: summarizeResult(event.data),
               result: event.data,
             };
           }
 
-          return {
-            ...message,
-            status: "error",
-            content: "这次查询没有成功。",
-            error: event.message,
-          };
+          if (event.type === "final") {
+            return {
+              ...message,
+              status: event.success ? "done" : "error",
+              content: event.success ? summarizeResult(event.result) : "这次查询没有成功。",
+              result: event.success ? event.result : undefined,
+              error: event.success ? undefined : event.error_message ?? event.suggested_action ?? "查询失败。",
+              warning: event.warning_message ?? undefined,
+            };
+          }
+
+          if (event.type === "error") {
+            return {
+              ...message,
+              status: "error",
+              content: "这次查询没有成功。",
+              error: event.message,
+            };
+          }
+
+          return message;
         }),
       );
     };

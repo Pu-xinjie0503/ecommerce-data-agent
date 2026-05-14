@@ -15,6 +15,10 @@ class TraceStep(TypedDict):
     input_summary: dict[str, Any]
     output_summary: dict[str, Any]
     error_message: str | None
+    error_type: str | None
+    error_node: str | None
+    recoverable: bool | None
+    suggested_action: str | None
 
 
 class TraceRecord(TypedDict):

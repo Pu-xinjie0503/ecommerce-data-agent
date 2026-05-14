@@ -27,7 +27,9 @@ from langgraph.graph import StateGraph
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
+from app.agent.errors import AgentErrorType
 from app.agent.nodes.add_extra_context import add_extra_context
+from app.agent.nodes.clarify_query import clarify_query
 from app.agent.nodes.correct_sql import correct_sql
 from app.agent.nodes.extract_keywords import extract_keywords
 from app.agent.nodes.filter_metric import filter_metric
@@ -70,10 +72,24 @@ def trace_node(
         try:
             output = await node_func(state, runtime)
         except Exception as exc:
-            trace_manager.end_step(name, error=str(exc))
+            trace_manager.end_step(
+                name,
+                output={
+                    "success": False,
+                    "error_type": state.get("error_type") or AgentErrorType.UNKNOWN_ERROR.value,
+                    "error_message": str(exc),
+                    "error_node": name,
+                    "recoverable": False,
+                    "suggested_action": state.get("suggested_action"),
+                },
+                error=str(exc),
+            )
             raise
 
-        trace_manager.end_step(name, output=output)
+        error_message = None
+        if isinstance(output, dict) and output.get("success") is False:
+            error_message = output.get("error_message")
+        trace_manager.end_step(name, output=output, error=error_message)
         return output
 
     return wrapped_node
@@ -89,6 +105,7 @@ graph_builder = StateGraph(
 # 注册节点：每个节点负责问数链路中的一个清晰步骤
 # trace_node 只做旁路可观测性记录，不改变节点输入输出语义
 graph_builder.add_node("guard_query", trace_node("guard_query", guard_query))
+graph_builder.add_node("clarify_query", trace_node("clarify_query", clarify_query))
 graph_builder.add_node("extract_keywords", trace_node("extract_keywords", extract_keywords))
 graph_builder.add_node("recall_column", trace_node("recall_column", recall_column))
 graph_builder.add_node("recall_value", trace_node("recall_value", recall_value))
@@ -108,14 +125,25 @@ graph_builder.add_node("run_sql", trace_node("run_sql", run_sql))
 
 
 # 从用户问题开始，先做输入侧安全检查
-# 安全请求继续抽取关键词；不安全请求直接结束，不进入后续 Agent 链路
+# 安全请求继续进入澄清判断；不安全请求直接结束，不进入后续 Agent 链路
 graph_builder.add_edge(START, "guard_query")
 graph_builder.add_conditional_edges(
     source="guard_query",
-    path=lambda state: "extract_keywords" if state["is_safe"] else END,
+    path=lambda state: "clarify_query" if state["is_safe"] else END,
     path_map={
-        "extract_keywords": "extract_keywords",
+        "clarify_query": "clarify_query",
         END: END,
+    },
+)
+
+
+# 安全请求进入查询澄清判断；需要澄清的问题直接结束，不生成 SQL
+graph_builder.add_conditional_edges(
+    source="clarify_query",
+    path=lambda state: END if state.get("need_clarification") else "extract_keywords",
+    path_map={
+        END: END,
+        "extract_keywords": "extract_keywords",
     },
 )
 
@@ -147,8 +175,15 @@ graph_builder.add_edge("filter_table", "add_extra_context")
 graph_builder.add_edge("filter_metric", "add_extra_context")
 
 
-# 补充上下文后生成 SQL
-graph_builder.add_edge("add_extra_context", "generate_sql")
+# 补充上下文后，检查是否有 grounding 错误；有则直接结束，无则生成 SQL
+graph_builder.add_conditional_edges(
+    source="add_extra_context",
+    path=lambda state: END if state.get("error_type") else "generate_sql",
+    path_map={
+        END: END,
+        "generate_sql": "generate_sql",
+    },
+)
 
 
 # 生成 SQL 后进入校验
@@ -159,7 +194,7 @@ graph_builder.add_edge("generate_sql", "validate_sql")
 # SQL 校验失败：进入修正节点
 graph_builder.add_conditional_edges(
     source="validate_sql",
-    path=lambda state: "run_sql" if state["error"] is None else "correct_sql",
+    path=lambda state: "run_sql" if state.get("error") is None else "correct_sql",
     path_map={
         "run_sql": "run_sql",
         "correct_sql": "correct_sql",

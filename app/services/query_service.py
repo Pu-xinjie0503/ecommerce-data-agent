@@ -11,6 +11,7 @@ import uuid
 from app.clients.embedding_client_manager import EmbeddingClientManager
 
 from app.agent.context import DataAgentContext
+from app.agent.errors import AgentErrorType
 from app.agent.graph import graph
 from app.agent.state import DataAgentState
 from app.core.context import request_id_ctx_var
@@ -62,23 +63,84 @@ class QueryService:
         )
 
         try:
-            async for chunk in graph.astream(
+            final_state: dict = {}
+            async for stream_mode, chunk in graph.astream(
                 input=state,
                 context=context,
-                stream_mode="custom",
+                stream_mode=["custom", "values"],
             ):
-                yield f"data: {json.dumps(chunk, ensure_ascii=False, default=str)}\n\n"
+                if stream_mode == "custom":
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False, default=str)}\n\n"
+                elif stream_mode == "values":
+                    final_state = dict(chunk)
 
             trace_manager.finish("success")
-            trace_manager.save()
+            trace_path = trace_manager.save()
+            final_response = build_final_response(
+                request_id=request_id,
+                state=final_state,
+                trace_path=trace_path,
+            )
+            yield f"data: {json.dumps(final_response, ensure_ascii=False, default=str)}\n\n"
 
         except Exception as e:
             trace_manager.finish("failed")
-            trace_manager.save()
-            error = {
-                "type": "error",
-                "message": str(e),
-            }
+            trace_path = trace_manager.save()
+            error = build_final_response(
+                request_id=request_id,
+                state={
+                    "success": False,
+                    "error_type": AgentErrorType.UNKNOWN_ERROR.value,
+                    "error_message": str(e),
+                    "error_node": "query_service",
+                    "recoverable": False,
+                    "suggested_action": "请查看 trace 定位失败节点后重试。",
+                },
+                trace_path=trace_path,
+            )
             yield f"data: {json.dumps(error, ensure_ascii=False, default=str)}\n\n"
         finally:
             request_id_ctx_var.reset(request_id_token)
+
+
+def build_final_response(request_id: str, state: dict, trace_path: str) -> dict:
+    if state.get("need_clarification"):
+        return {
+            "type": "final",
+            "request_id": request_id,
+            "success": False,
+            "status": "need_clarification",
+            "need_clarification": True,
+            "clarification_type": state.get("clarification_type"),
+            "clarification_question": state.get("clarification_question"),
+            "clarification_options": state.get("clarification_options", []),
+            "sql": None,
+            "result": None,
+            "error_type": state.get("error_type"),
+            "error_message": state.get("error_message"),
+            "recoverable": state.get("recoverable", False),
+            "suggested_action": state.get("suggested_action"),
+            "trace_path": trace_path,
+        }
+
+    return {
+        "type": "final",
+        "request_id": request_id,
+        "success": state.get("success", state.get("error_type") is None),
+        "status": "success" if state.get("error_type") is None else "failed",
+        "need_clarification": False,
+        "clarification_type": state.get("clarification_type"),
+        "clarification_question": state.get("clarification_question"),
+        "clarification_options": state.get("clarification_options", []),
+        "sql": state.get("sql"),
+        "result": state.get("result"),
+        "error_type": state.get("error_type"),
+        "error_message": state.get("error_message"),
+        "recoverable": state.get("recoverable", False),
+        "suggested_action": state.get("suggested_action"),
+        "warning_type": state.get("warning_type"),
+        "warning_message": state.get("warning_message"),
+        "missing_values": state.get("missing_values"),
+        "matched_values": state.get("matched_values"),
+        "trace_path": trace_path,
+    }

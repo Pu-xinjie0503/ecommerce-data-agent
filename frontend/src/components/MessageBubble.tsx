@@ -48,9 +48,38 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
             )}
           </div>
 
+          {message.clarification && (
+            <div className="mt-3 border border-moss/30 bg-moss/10 px-4 py-3 text-sm text-ink">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-moss">
+                需要进一步确认
+              </div>
+              <div className="leading-6">
+                {message.clarification.clarification_question ?? "请补充查询条件后继续提问。"}
+              </div>
+              {message.clarification.clarification_options?.length ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {message.clarification.clarification_options.map((option) => (
+                    <span
+                      key={option}
+                      className="border border-moss/25 bg-white/55 px-2.5 py-1 text-xs font-medium text-moss"
+                    >
+                      {option}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
+
           {message.error && (
             <div className="mt-3 border border-tomato/30 bg-tomato/10 px-3 py-2 text-sm text-tomato">
               {message.error}
+            </div>
+          )}
+
+          {message.warning && (
+            <div className="mt-3 border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-800">
+              {message.warning}
             </div>
           )}
 

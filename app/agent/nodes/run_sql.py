@@ -1,6 +1,7 @@
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
+from app.agent.errors import AgentErrorType, build_error_state, clear_error_state
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.utils.sql_parser import extract_sql
@@ -27,11 +28,41 @@ async def run_sql(
         writer({"type": "progress", "step": step, "status": "success"})
         writer({"type": "result", "data": result})
 
+        result_state = clear_error_state(success=True)
+        if is_empty_result(result):
+            result_state.update(
+                {
+                    "error_type": AgentErrorType.EMPTY_RESULT.value,
+                    "error_message": "SQL 执行成功，但结果为空或聚合结果为 None。",
+                    "error_node": "run_sql",
+                    "recoverable": True,
+                    "suggested_action": "请确认查询条件、时间范围或底层数据是否存在。",
+                }
+            )
+
         return {
             "result": result,
+            **result_state,
         }
 
     except Exception as e:
         logger.error(f"{step} failed: {e}")
         writer({"type": "progress", "step": step, "status": "error"})
-        raise
+        return {
+            "result": None,
+            **build_error_state(
+                error_type=AgentErrorType.SQL_EXECUTION_FAILED,
+                error_message=str(e),
+                error_node="run_sql",
+                recoverable=False,
+                suggested_action="请检查数据库连接、SQL 执行权限和生成 SQL 的表字段是否有效。",
+            ),
+        }
+
+
+def is_empty_result(result: object) -> bool:
+    if result == []:
+        return True
+    if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
+        return all(value is None for value in result[0].values())
+    return False

@@ -95,5 +95,25 @@ class DataAgentState(TypedDict, total=False):
     sql: str
     error: str
 
+    # 查询澄清状态
+    need_clarification: bool
+    clarification_type: str | None
+    clarification_question: str | None
+    clarification_options: list[str]
+
+    # 结构化执行结果
+    success: bool
+    error_type: str | None
+    error_message: str | None
+    error_node: str | None
+    recoverable: bool
+    suggested_action: str | None
+
+    # 结构化非阻断告警
+    warning_type: str | None
+    warning_message: str | None
+    missing_values: list[str]
+    matched_values: list[str]
+
     #结果
     result: list[dict]

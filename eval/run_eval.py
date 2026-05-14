@@ -71,6 +71,11 @@ def load_cases() -> list[dict[str, Any]]:
         case.setdefault("expected_values", [])
         case.setdefault("must_contain_sql", [])
         case.setdefault("forbidden_sql", [])
+        case.setdefault("expected_error_type", None)
+        case.setdefault("expected_warning_type", None)
+        case.setdefault("expected_clarification", False)
+        case.setdefault("expected_missing_values", [])
+        case.setdefault("expected_matched_values", [])
         case.setdefault("difficulty", "unknown")
         case.setdefault("description", "")
 
@@ -113,11 +118,68 @@ def evaluate_case_result(
     exception: str | None,
     risk_type: str | None,
     guard_reason: str | None,
+    error_type: str | None,
+    warning_type: str | None,
+    need_clarification: bool | None,
+    clarification_question: str | None,
+    trace_step_names: list[str] | None,
+    missing_values: list[str] | None,
+    matched_values: list[str] | None,
 ) -> tuple[bool, list[str], bool, bool]:
     reasons: list[str] = []
     normalized_sql = normalize_sql(sql)
     sql_generated = bool(normalized_sql)
     sql_executed = exception is None and state_error is None and result is not None
+
+    if case.get("expected_clarification"):
+        if exception:
+            reasons.append(f"执行异常：{exception}")
+        if need_clarification is not True:
+            reasons.append("澄清用例应返回 need_clarification=true")
+        if sql is not None:
+            reasons.append("澄清用例不应生成 SQL")
+        if result is not None:
+            reasons.append("澄清用例不应返回 SQL 执行结果")
+        if not clarification_question:
+            reasons.append("澄清用例缺少 clarification_question")
+        steps = trace_step_names or []
+        if "clarify_query" not in steps:
+            reasons.append("trace 缺少 clarify_query 节点")
+        if "generate_sql" in steps:
+            reasons.append("澄清用例不应进入 generate_sql")
+        if "run_sql" in steps:
+            reasons.append("澄清用例不应进入 run_sql")
+        return not reasons, reasons, sql_generated, sql_executed
+
+    if need_clarification:
+        reasons.append("非澄清用例不应被澄清拦截")
+        return not reasons, reasons, sql_generated, sql_executed
+
+    if case.get("expected_error_type") and error_type != case["expected_error_type"]:
+        reasons.append(
+            f"错误类型不匹配：expected={case['expected_error_type']} actual={error_type}"
+        )
+
+    if case.get("expected_warning_type") and warning_type != case["expected_warning_type"]:
+        reasons.append(
+            f"告警类型不匹配：expected={case['expected_warning_type']} actual={warning_type}"
+        )
+
+    if case.get("expected_missing_values"):
+        actual_missing = set(missing_values or [])
+        expected_missing = set(case["expected_missing_values"])
+        if not expected_missing.issubset(actual_missing):
+            reasons.append(
+                f"缺失取值不匹配：expected包含={sorted(expected_missing)} actual={sorted(actual_missing)}"
+            )
+
+    if case.get("expected_matched_values"):
+        actual_matched = set(matched_values or [])
+        expected_matched = set(case["expected_matched_values"])
+        if not expected_matched.issubset(actual_matched):
+            reasons.append(
+                f"命中取值不匹配：expected包含={sorted(expected_matched)} actual={sorted(actual_matched)}"
+            )
 
     if case.get("expected_blocked"):
         if exception:
@@ -130,6 +192,16 @@ def evaluate_case_result(
             reasons.append("拦截用例缺少有效 risk_type")
         if not guard_reason:
             reasons.append("拦截用例缺少 guard_reason")
+        return not reasons, reasons, sql_generated, sql_executed
+
+    # 期望错误类型（非 blocked）：验证 SQL 为空且 error_type 匹配
+    if case.get("expected_error_type") and not case.get("expected_blocked"):
+        if exception:
+            reasons.append(f"执行异常：{exception}")
+        if sql_generated:
+            reasons.append("错误用例不应生成 SQL")
+        if result is not None:
+            reasons.append("错误用例不应返回 SQL 执行结果")
         return not reasons, reasons, sql_generated, sql_executed
 
     if exception:
@@ -216,6 +288,21 @@ async def run_agent_query(query: str, case_id: str) -> dict[str, Any]:
         request_id_ctx_var.reset(request_id_token)
 
 
+def get_trace_step_names(trace_path: str) -> list[str]:
+    if not trace_path:
+        return []
+
+    path = Path(trace_path)
+    if not path.exists():
+        return []
+
+    with path.open("r", encoding="utf-8") as file:
+        trace = json.load(file)
+
+    steps = trace.get("steps") or []
+    return [step.get("name") for step in steps if isinstance(step, dict) and step.get("name")]
+
+
 async def run_case(case: dict[str, Any]) -> dict[str, Any]:
     started_at = time.perf_counter()
     final_state: dict[str, Any] = {}
@@ -238,6 +325,19 @@ async def run_case(case: dict[str, Any]) -> dict[str, Any]:
     state_error = final_state.get("error")
     risk_type = final_state.get("risk_type")
     guard_reason = final_state.get("guard_reason")
+    error_type = final_state.get("error_type")
+    error_message = final_state.get("error_message")
+    recoverable = final_state.get("recoverable")
+    suggested_action = final_state.get("suggested_action")
+    warning_type = final_state.get("warning_type")
+    warning_message = final_state.get("warning_message")
+    need_clarification = final_state.get("need_clarification")
+    clarification_type = final_state.get("clarification_type")
+    clarification_question = final_state.get("clarification_question")
+    clarification_options = final_state.get("clarification_options")
+    missing_values = final_state.get("missing_values")
+    matched_values = final_state.get("matched_values")
+    trace_step_names = get_trace_step_names(trace_path)
     passed, reasons, sql_generated, sql_executed = evaluate_case_result(
         case=case,
         sql=sql,
@@ -246,6 +346,13 @@ async def run_case(case: dict[str, Any]) -> dict[str, Any]:
         exception=exception,
         risk_type=risk_type,
         guard_reason=guard_reason,
+        error_type=error_type,
+        warning_type=warning_type,
+        need_clarification=need_clarification,
+        clarification_question=clarification_question,
+        trace_step_names=trace_step_names,
+        missing_values=missing_values,
+        matched_values=matched_values,
     )
 
     return {
@@ -262,6 +369,18 @@ async def run_case(case: dict[str, Any]) -> dict[str, Any]:
         "result_row_count": result_row_count(result),
         "risk_type": risk_type,
         "guard_reason": guard_reason,
+        "error_type": error_type,
+        "error_message": error_message,
+        "recoverable": recoverable,
+        "suggested_action": suggested_action,
+        "warning_type": warning_type,
+        "warning_message": warning_message,
+        "need_clarification": need_clarification,
+        "clarification_type": clarification_type,
+        "clarification_question": clarification_question,
+        "clarification_options": clarification_options,
+        "missing_values": missing_values,
+        "matched_values": matched_values,
         "trace_path": trace_path,
         "duration_ms": duration_ms,
         "error": exception or state_error,

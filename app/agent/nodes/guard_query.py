@@ -7,6 +7,7 @@ from typing import Literal
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
+from app.agent.errors import AgentErrorType, build_error_state, clear_error_state
 from app.agent.state import DataAgentState
 from app.core.log import logger
 
@@ -117,6 +118,13 @@ def check_query_safety(query: str) -> dict[str, object]:
                     "final_answer": BLOCKED_ANSWER,
                     "sql": None,
                     "result": None,
+                    **build_error_state(
+                        error_type=AgentErrorType.UNSAFE_QUERY,
+                        error_message=rule.reason,
+                        error_node="guard_query",
+                        recoverable=False,
+                        suggested_action="请改写为只读业务数据查询，不要包含删除、修改、建表、提示词泄露或敏感信息请求。",
+                    ),
                 }
 
     return {
@@ -124,4 +132,5 @@ def check_query_safety(query: str) -> dict[str, object]:
         "risk_level": "low",
         "risk_type": "normal_query",
         "guard_reason": "未命中输入侧安全拦截规则",
+        **clear_error_state(success=True),
     }

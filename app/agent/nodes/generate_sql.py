@@ -4,6 +4,7 @@ from langchain_core.prompts import PromptTemplate
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
+from app.agent.errors import AgentErrorType, build_error_state
 from app.agent.llm import llm
 from app.agent.state import DataAgentState
 from app.core.log import logger
@@ -68,6 +69,9 @@ async def generate_sql(
         )
 
         raw_sql = result.strip()
+        if not raw_sql:
+            raise ValueError("LLM 没有返回 SQL 内容")
+
         clean_sql = extract_sql(raw_sql)
 
         logger.debug(f"LLM 原始 SQL 输出：{raw_sql}")
@@ -82,4 +86,18 @@ async def generate_sql(
     except Exception as e:
         logger.error(f"{step} failed: {e}")
         writer({"type": "progress", "step": step, "status": "error"})
-        raise
+        error_type = (
+            AgentErrorType.SQL_GENERATION_FAILED
+            if "没有返回 SQL 内容" in str(e)
+            else AgentErrorType.SQL_PARSE_FAILED
+        )
+        return {
+            "error": str(e),
+            **build_error_state(
+                error_type=error_type,
+                error_message=str(e),
+                error_node="generate_sql",
+                recoverable=False,
+                suggested_action="请检查 SQL 生成提示词和召回上下文后重试。",
+            ),
+        }
