@@ -13,14 +13,14 @@ db_meta:
   host: localhost
   port: 3306
   user: didilili
-  password: dili123
+  password: ${oc.env:DB_META_PASSWORD,dili123}
   database: meta
 
 db_dw:
   host: localhost
   port: 3306
   user: didilili
-  password: dili123
+  password: ${oc.env:DB_DW_PASSWORD,dili123}
   database: dw
 
 qdrant:

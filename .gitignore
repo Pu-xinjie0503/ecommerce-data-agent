@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+build/
+dist/
+*.egg-info/
 
 # Virtual environments
 .venv/
@@ -16,6 +19,7 @@ logs/
 # Environment files
 .env
 .env.*
+!.env.example
 
 # OS
 .DS_Store
@@ -33,6 +37,27 @@ tei-data/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Data / databases
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+
+# Model artifacts
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.ckpt
+models/
+
+# Docker local data
+/docker/data/
+/docker/mysql-data/
+/docker/qdrant-data/
+/docker/es-data/
+/docker/redis-data/
 
 # Frontend
 frontend/node_modules/
