@@ -70,3 +70,8 @@ eval/reports/latest.*
 
 # Agent trace runtime files
 traces/
+
+# Evaluation runtime reports
+eval/reports/*latest*
+eval/reports/*rerun*
+eval/reports/runtime_core_8_*.json

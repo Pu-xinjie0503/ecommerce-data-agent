@@ -1,0 +1,246 @@
+{
+  "source_report": "E:\\practical project\\shopkeeper-agent-backend\\eval\\reports\\expanded_55_rerun.json",
+  "generated_at": "2026-05-29T15:24:57",
+  "summary": {
+    "case_file": null,
+    "total_cases": 55,
+    "passed": 41,
+    "failed": 14,
+    "pass_rate": 74.55,
+    "missing_traces": 0,
+    "total_duration_ms": 135838.42,
+    "avg_duration_ms": 2469.79,
+    "p50_duration_ms": 2808.57,
+    "p90_duration_ms": 3996.83,
+    "p95_duration_ms": 4298.93,
+    "max_duration_ms": 4620.02
+  },
+  "step_stats": [
+    {
+      "name": "generate_sql",
+      "count": 34,
+      "error_count": 0,
+      "avg_ms": 1655.95,
+      "p50_ms": 1569.54,
+      "p90_ms": 2271.86,
+      "p95_ms": 2404.25,
+      "max_ms": 2487.21
+    },
+    {
+      "name": "recall_metric",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 1715.45,
+      "p50_ms": 1741.83,
+      "p90_ms": 2007.38,
+      "p95_ms": 2090.87,
+      "max_ms": 2199.1
+    },
+    {
+      "name": "recall_column",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 1389.21,
+      "p50_ms": 1340.68,
+      "p90_ms": 1756.7,
+      "p95_ms": 1955.93,
+      "max_ms": 2217.85
+    },
+    {
+      "name": "recall_value",
+      "count": 45,
+      "error_count": 11,
+      "avg_ms": 777.79,
+      "p50_ms": 722.01,
+      "p90_ms": 1177.75,
+      "p95_ms": 1289.94,
+      "max_ms": 1533.59
+    },
+    {
+      "name": "merge_retrieved_info",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 8.22,
+      "p50_ms": 8.05,
+      "p90_ms": 10.43,
+      "p95_ms": 11.05,
+      "max_ms": 21.21
+    },
+    {
+      "name": "validate_sql",
+      "count": 34,
+      "error_count": 0,
+      "avg_ms": 3.29,
+      "p50_ms": 3.16,
+      "p90_ms": 4.2,
+      "p95_ms": 4.58,
+      "max_ms": 5.26
+    },
+    {
+      "name": "add_extra_context",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 2.01,
+      "p50_ms": 1.77,
+      "p90_ms": 2.0,
+      "p95_ms": 2.32,
+      "max_ms": 13.89
+    },
+    {
+      "name": "run_sql",
+      "count": 34,
+      "error_count": 0,
+      "avg_ms": 1.16,
+      "p50_ms": 1.07,
+      "p90_ms": 1.54,
+      "p95_ms": 1.86,
+      "max_ms": 2.35
+    },
+    {
+      "name": "extract_keywords",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 7.66,
+      "p50_ms": 0.18,
+      "p90_ms": 0.82,
+      "p95_ms": 1.47,
+      "max_ms": 330.96
+    },
+    {
+      "name": "filter_table",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 0.23,
+      "p50_ms": 0.22,
+      "p90_ms": 0.25,
+      "p95_ms": 0.31,
+      "max_ms": 1.0
+    },
+    {
+      "name": "filter_metric",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 0.2,
+      "p50_ms": 0.22,
+      "p90_ms": 0.24,
+      "p95_ms": 0.28,
+      "max_ms": 0.33
+    },
+    {
+      "name": "clarify_query",
+      "count": 49,
+      "error_count": 0,
+      "avg_ms": 0.13,
+      "p50_ms": 0.11,
+      "p90_ms": 0.19,
+      "p95_ms": 0.23,
+      "max_ms": 0.55
+    },
+    {
+      "name": "guard_query",
+      "count": 55,
+      "error_count": 6,
+      "avg_ms": 0.17,
+      "p50_ms": 0.14,
+      "p90_ms": 0.21,
+      "p95_ms": 0.21,
+      "max_ms": 1.14
+    }
+  ],
+  "slowest_cases": [
+    {
+      "id": "p2_007",
+      "query": "按会员等级统计 2025 年第一季度的订单数和销售额",
+      "passed": true,
+      "duration_ms": 4620.02,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_007-2e08e510.json",
+      "missing_trace": false
+    },
+    {
+      "id": "p2_009",
+      "query": "统计 2025 年第一季度各大区的 GMV，并按 GMV 从高到低排序",
+      "passed": true,
+      "duration_ms": 4450.58,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_009-cc0b59cb.json",
+      "missing_trace": false
+    },
+    {
+      "id": "p2_015",
+      "query": "对比华北和华东的销售额",
+      "passed": true,
+      "duration_ms": 4307.09,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_015-c9a95da2.json",
+      "missing_trace": false
+    },
+    {
+      "id": "p2_017",
+      "query": "按大区统计食品饮料品类的销售额",
+      "passed": true,
+      "duration_ms": 4295.44,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_017-e5db19c9.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_008",
+      "query": "统计西南地区食品饮料品类的销售额",
+      "passed": true,
+      "duration_ms": 4076.02,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_008-2b5bde0b.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_001",
+      "query": "按品牌统计销售额，并按销售额从高到低排序",
+      "passed": true,
+      "duration_ms": 4014.09,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_001-d2382ba9.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_018",
+      "query": "统计华北地区的销售额、订单数和销量",
+      "passed": true,
+      "duration_ms": 3970.93,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_018-07d135bb.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_011",
+      "query": "统计 2025 年第二季度各大区的销售额",
+      "passed": true,
+      "duration_ms": 3908.38,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_011-d664e8bc.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_019",
+      "query": "按大区统计销售额、订单数和销量",
+      "passed": true,
+      "duration_ms": 3864.93,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_019-e40fae2a.json",
+      "missing_trace": false
+    },
+    {
+      "id": "p2_010",
+      "query": "统计华北地区美的品牌的销售额",
+      "passed": true,
+      "duration_ms": 3808.28,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_010-b955548d.json",
+      "missing_trace": false
+    }
+  ],
+  "risk_flags": {
+    "FULL_TABLE_SCAN": 33,
+    "NO_INDEX_USED": 34,
+    "USING_TEMPORARY": 15,
+    "USING_FILESORT": 4
+  },
+  "parallel_recall": {
+    "checked_cases": 45,
+    "parallel_observed_cases": 45,
+    "parallel_recall_observed": true,
+    "avg_duration_sum_ms": 3882.46,
+    "avg_wall_time_ms": 1732.47,
+    "avg_estimated_saved_ms": 2149.99
+  }
+}

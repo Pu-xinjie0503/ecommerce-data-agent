@@ -28,17 +28,61 @@ class DWMySQLRepository:
 
         return value
     
-    async def validate(self, sql: str):
-        """用 EXPLAIN 校验 SQL 是否能被数据库解析"""
-
-        validate_sql = f"explain {sql}"
+    async def explain(self, sql: str) -> list[dict]:
+        explain_sql = f"explain {sql}"
 
         try:
             await self.session.execute(text("SET SESSION sql_notes = 0"))
-            await self.session.execute(text(validate_sql))
+            result = await self.session.execute(text(explain_sql))
         finally:
             await self.session.execute(text("SET SESSION sql_notes = 1"))
 
+        return [self._normalize_explain_row(dict(row)) for row in result.mappings().fetchall()]
+
+    async def validate(self, sql: str) -> list[dict]:
+        """用 EXPLAIN 校验 SQL 是否能被数据库解析"""
+
+        return await self.explain(sql)
+
+    @classmethod
+    def build_explain_risk_flags(cls, explain_rows: list[dict], large_rows_threshold: int = 10000) -> list[str]:
+        flags: set[str] = set()
+
+        for row in explain_rows:
+            access_type = str(row.get("type") or "").upper()
+            used_key = row.get("key")
+            rows = row.get("rows")
+            extra = str(row.get("Extra") or "")
+
+            if access_type == "ALL":
+                flags.add("FULL_TABLE_SCAN")
+
+            if not used_key:
+                flags.add("NO_INDEX_USED")
+
+            if isinstance(rows, int | float) and rows >= large_rows_threshold:
+                flags.add("LARGE_ROWS_SCAN")
+
+            if "Using temporary" in extra:
+                flags.add("USING_TEMPORARY")
+
+            if "Using filesort" in extra:
+                flags.add("USING_FILESORT")
+
+        return sorted(flags)
+
+    @staticmethod
+    def _normalize_explain_row(row: dict) -> dict:
+        normalized = {
+            "type": row.get("type"),
+            "possible_keys": row.get("possible_keys"),
+            "key": row.get("key"),
+            "rows": row.get("rows"),
+            "filtered": row.get("filtered"),
+            "Extra": row.get("Extra") or row.get("extra"),
+        }
+
+        return {key: DWMySQLRepository._to_json_safe(value) for key, value in normalized.items()}
 
     async def run(self, sql: str) -> list[dict]:
         """执行 SQL，并返回字典列表结果"""

@@ -115,5 +115,9 @@ class DataAgentState(TypedDict, total=False):
     missing_values: list[str]
     matched_values: list[str]
 
+    # SQL 执行计划观测
+    sql_explain: list[dict]
+    risk_flags: list[str]
+
     #结果
     result: list[dict]

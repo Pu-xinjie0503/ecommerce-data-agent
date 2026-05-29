@@ -152,7 +152,7 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
         if key in payload:
             summary[key] = safe_jsonable(payload.get(key))
 
-    for key in ("date_info", "db_info", "sql", "error"):
+    for key in ("date_info", "db_info", "sql", "error", "sql_explain", "risk_flags"):
         if key in payload:
             summary[key] = safe_jsonable(payload.get(key))
 

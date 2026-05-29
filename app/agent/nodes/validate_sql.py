@@ -22,16 +22,21 @@ async def validate_sql(
 
         try:
             sql = extract_sql(state["sql"])
-            await dw_mysql_repository.validate(sql)
+            explain_rows = await dw_mysql_repository.validate(sql)
+            risk_flags = dw_mysql_repository.build_explain_risk_flags(explain_rows)
 
             logger.info("SQL语法正确")
             writer({"type": "progress", "step": step, "status": "success"})
 
-            return {
+            result = {
                 "sql": sql,
                 "error": None,
+                "sql_explain": explain_rows,
+                "risk_flags": risk_flags,
                 **clear_error_state(success=True),
             }
+
+            return result
 
         except Exception as e:
             logger.info(f"SQL语法错误：{str(e)}")
