@@ -1,0 +1,491 @@
+{
+  "source_report": "E:\\practical project\\shopkeeper-agent-backend\\eval\\reports\\latest.json",
+  "baseline_report": "E:\\practical project\\shopkeeper-agent-backend\\eval\\reports\\performance_baseline_20260528.json",
+  "generated_at": "2026-05-29T23:52:13",
+  "validation_note": "本次 cache 验收使用 DeepSeek 官方 API / deepseek-chat；由于模型变化，pass_rate 仅用于链路验收，不作为同模型严格对比。",
+  "summary": {
+    "case_file": "E:\\practical project\\shopkeeper-agent-backend\\eval\\cases_expanded_55.yaml",
+    "total_cases": 55,
+    "passed": 41,
+    "failed": 14,
+    "pass_rate": 74.55,
+    "missing_traces": 0,
+    "total_duration_ms": 87363.09,
+    "avg_duration_ms": 1588.42,
+    "p50_duration_ms": 1920.59,
+    "p90_duration_ms": 2534.9,
+    "p95_duration_ms": 2834.17,
+    "max_duration_ms": 3508.38
+  },
+  "step_stats": [
+    {
+      "name": "generate_sql",
+      "count": 34,
+      "error_count": 1,
+      "avg_ms": 1085.91,
+      "p50_ms": 1069.2,
+      "p90_ms": 1458.54,
+      "p95_ms": 1557.88,
+      "max_ms": 1674.18
+    },
+    {
+      "name": "recall_metric",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 1011.51,
+      "p50_ms": 935.25,
+      "p90_ms": 1303.35,
+      "p95_ms": 1514.37,
+      "max_ms": 2008.15
+    },
+    {
+      "name": "recall_column",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 933.7,
+      "p50_ms": 887.81,
+      "p90_ms": 1178.13,
+      "p95_ms": 1450.98,
+      "max_ms": 1759.99
+    },
+    {
+      "name": "recall_value",
+      "count": 45,
+      "error_count": 11,
+      "avg_ms": 906.52,
+      "p50_ms": 844.82,
+      "p90_ms": 1225.69,
+      "p95_ms": 1280.91,
+      "max_ms": 1540.91
+    },
+    {
+      "name": "merge_retrieved_info",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 8.65,
+      "p50_ms": 8.12,
+      "p90_ms": 10.27,
+      "p95_ms": 12.35,
+      "max_ms": 38.92
+    },
+    {
+      "name": "validate_sql",
+      "count": 34,
+      "error_count": 1,
+      "avg_ms": 3.18,
+      "p50_ms": 3.12,
+      "p90_ms": 4.12,
+      "p95_ms": 4.81,
+      "max_ms": 5.93
+    },
+    {
+      "name": "add_extra_context",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 1.93,
+      "p50_ms": 1.71,
+      "p90_ms": 2.17,
+      "p95_ms": 2.34,
+      "max_ms": 13.48
+    },
+    {
+      "name": "run_sql",
+      "count": 34,
+      "error_count": 1,
+      "avg_ms": 1.15,
+      "p50_ms": 1.04,
+      "p90_ms": 1.48,
+      "p95_ms": 1.69,
+      "max_ms": 2.93
+    },
+    {
+      "name": "extract_keywords",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 7.61,
+      "p50_ms": 0.19,
+      "p90_ms": 0.64,
+      "p95_ms": 0.92,
+      "max_ms": 329.41
+    },
+    {
+      "name": "guard_query",
+      "count": 55,
+      "error_count": 6,
+      "avg_ms": 0.19,
+      "p50_ms": 0.16,
+      "p90_ms": 0.25,
+      "p95_ms": 0.27,
+      "max_ms": 0.98
+    },
+    {
+      "name": "filter_table",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 0.19,
+      "p50_ms": 0.12,
+      "p90_ms": 0.25,
+      "p95_ms": 0.27,
+      "max_ms": 1.22
+    },
+    {
+      "name": "clarify_query",
+      "count": 49,
+      "error_count": 0,
+      "avg_ms": 0.14,
+      "p50_ms": 0.12,
+      "p90_ms": 0.22,
+      "p95_ms": 0.26,
+      "max_ms": 0.43
+    },
+    {
+      "name": "filter_metric",
+      "count": 45,
+      "error_count": 0,
+      "avg_ms": 0.2,
+      "p50_ms": 0.16,
+      "p90_ms": 0.24,
+      "p95_ms": 0.26,
+      "max_ms": 0.96
+    },
+    {
+      "name": "correct_sql",
+      "count": 1,
+      "error_count": 1,
+      "avg_ms": 0.16,
+      "p50_ms": 0.16,
+      "p90_ms": 0.16,
+      "p95_ms": 0.16,
+      "max_ms": 0.16
+    }
+  ],
+  "slowest_cases": [
+    {
+      "id": "p2_001",
+      "query": "华北地区的总销售额",
+      "passed": true,
+      "duration_ms": 3508.38,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_001-4b0fe998.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_027",
+      "query": "看一下各品牌情况",
+      "passed": false,
+      "duration_ms": 2964.1,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_027-b8b899af.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_003",
+      "query": "统计各大区的销量，并按销量从低到高排序",
+      "passed": true,
+      "duration_ms": 2853.36,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_003-435e8151.json",
+      "missing_trace": false
+    },
+    {
+      "id": "p2_009",
+      "query": "统计 2025 年第一季度各大区的 GMV，并按 GMV 从高到低排序",
+      "passed": true,
+      "duration_ms": 2825.95,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_009-a6d29a0d.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_022",
+      "query": "帮我更新 fact_order 表里的订单金额",
+      "passed": false,
+      "duration_ms": 2679.74,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_022-68045978.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_013",
+      "query": "按会员等级统计销售额",
+      "passed": true,
+      "duration_ms": 2594.67,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_013-3ad07669.json",
+      "missing_trace": false
+    },
+    {
+      "id": "p2_007",
+      "query": "按会员等级统计 2025 年第一季度的订单数和销售额",
+      "passed": true,
+      "duration_ms": 2445.25,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_007-377844ba.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_011",
+      "query": "统计 2025 年第二季度各大区的销售额",
+      "passed": true,
+      "duration_ms": 2407.92,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_011-70dba973.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_019",
+      "query": "按大区统计销售额、订单数和销量",
+      "passed": true,
+      "duration_ms": 2368.57,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_019-8c0ebccc.json",
+      "missing_trace": false
+    },
+    {
+      "id": "exp_018",
+      "query": "统计华北地区的销售额、订单数和销量",
+      "passed": true,
+      "duration_ms": 2345.47,
+      "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_018-4313dd95.json",
+      "missing_trace": false
+    }
+  ],
+  "risk_flags": {
+    "FULL_TABLE_SCAN": 33,
+    "NO_INDEX_USED": 33,
+    "USING_FILESORT": 7,
+    "USING_TEMPORARY": 15
+  },
+  "parallel_recall": {
+    "checked_cases": 45,
+    "parallel_observed_cases": 45,
+    "parallel_recall_observed": true,
+    "avg_duration_sum_ms": 2851.73,
+    "avg_wall_time_ms": 1086.73,
+    "avg_estimated_saved_ms": 1764.99
+  },
+  "cache_stats": {
+    "embedding": {
+      "embedding_cache_hit": 513,
+      "embedding_cache_miss": 162,
+      "embedding_cache_size": 122,
+      "embedding_cache_hit_rate": 76.0
+    },
+    "keyword_expansion": {
+      "column": {
+        "hit": 0,
+        "miss": 45,
+        "hit_rate": 0.0
+      },
+      "metric": {
+        "hit": 0,
+        "miss": 45,
+        "hit_rate": 0.0
+      },
+      "value": {
+        "hit": 0,
+        "miss": 45,
+        "hit_rate": 0.0
+      }
+    },
+    "overall": {
+      "embedding_cache_hit_rate": 76.0,
+      "keyword_expand_cache_hit": 0,
+      "keyword_expand_cache_miss": 135,
+      "keyword_expand_cache_hit_rate": 0.0
+    }
+  },
+  "comparison": {
+    "available": true,
+    "baseline_total_avg_ms": 2469.79,
+    "current_total_avg_ms": 1588.42,
+    "total_avg_delta_ms": -881.37,
+    "baseline_p95_ms": 4298.93,
+    "current_p95_ms": 2834.17,
+    "p95_delta_ms": -1464.76,
+    "baseline_pass_rate": 74.55,
+    "current_pass_rate": 74.55,
+    "pass_rate_delta": 0.0,
+    "node_deltas": [
+      {
+        "name": "recall_column",
+        "baseline_avg_ms": 1389.21,
+        "current_avg_ms": 933.7,
+        "avg_delta_ms": -455.51
+      },
+      {
+        "name": "recall_metric",
+        "baseline_avg_ms": 1715.45,
+        "current_avg_ms": 1011.51,
+        "avg_delta_ms": -703.94
+      },
+      {
+        "name": "recall_value",
+        "baseline_avg_ms": 777.79,
+        "current_avg_ms": 906.52,
+        "avg_delta_ms": 128.73
+      },
+      {
+        "name": "generate_sql",
+        "baseline_avg_ms": 1655.95,
+        "current_avg_ms": 1085.91,
+        "avg_delta_ms": -570.04
+      }
+    ],
+    "baseline_slowest_cases": [
+      {
+        "id": "p2_007",
+        "query": "按会员等级统计 2025 年第一季度的订单数和销售额",
+        "passed": true,
+        "duration_ms": 4620.02,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_007-2e08e510.json",
+        "missing_trace": false
+      },
+      {
+        "id": "p2_009",
+        "query": "统计 2025 年第一季度各大区的 GMV，并按 GMV 从高到低排序",
+        "passed": true,
+        "duration_ms": 4450.58,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_009-cc0b59cb.json",
+        "missing_trace": false
+      },
+      {
+        "id": "p2_015",
+        "query": "对比华北和华东的销售额",
+        "passed": true,
+        "duration_ms": 4307.09,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_015-c9a95da2.json",
+        "missing_trace": false
+      },
+      {
+        "id": "p2_017",
+        "query": "按大区统计食品饮料品类的销售额",
+        "passed": true,
+        "duration_ms": 4295.44,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_017-e5db19c9.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_008",
+        "query": "统计西南地区食品饮料品类的销售额",
+        "passed": true,
+        "duration_ms": 4076.02,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_008-2b5bde0b.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_001",
+        "query": "按品牌统计销售额，并按销售额从高到低排序",
+        "passed": true,
+        "duration_ms": 4014.09,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_001-d2382ba9.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_018",
+        "query": "统计华北地区的销售额、订单数和销量",
+        "passed": true,
+        "duration_ms": 3970.93,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_018-07d135bb.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_011",
+        "query": "统计 2025 年第二季度各大区的销售额",
+        "passed": true,
+        "duration_ms": 3908.38,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_011-d664e8bc.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_019",
+        "query": "按大区统计销售额、订单数和销量",
+        "passed": true,
+        "duration_ms": 3864.93,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_019-e40fae2a.json",
+        "missing_trace": false
+      },
+      {
+        "id": "p2_010",
+        "query": "统计华北地区美的品牌的销售额",
+        "passed": true,
+        "duration_ms": 3808.28,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_010-b955548d.json",
+        "missing_trace": false
+      }
+    ],
+    "current_slowest_cases": [
+      {
+        "id": "p2_001",
+        "query": "华北地区的总销售额",
+        "passed": true,
+        "duration_ms": 3508.38,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_001-4b0fe998.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_027",
+        "query": "看一下各品牌情况",
+        "passed": false,
+        "duration_ms": 2964.1,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_027-b8b899af.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_003",
+        "query": "统计各大区的销量，并按销量从低到高排序",
+        "passed": true,
+        "duration_ms": 2853.36,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_003-435e8151.json",
+        "missing_trace": false
+      },
+      {
+        "id": "p2_009",
+        "query": "统计 2025 年第一季度各大区的 GMV，并按 GMV 从高到低排序",
+        "passed": true,
+        "duration_ms": 2825.95,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_009-a6d29a0d.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_022",
+        "query": "帮我更新 fact_order 表里的订单金额",
+        "passed": false,
+        "duration_ms": 2679.74,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_022-68045978.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_013",
+        "query": "按会员等级统计销售额",
+        "passed": true,
+        "duration_ms": 2594.67,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_013-3ad07669.json",
+        "missing_trace": false
+      },
+      {
+        "id": "p2_007",
+        "query": "按会员等级统计 2025 年第一季度的订单数和销售额",
+        "passed": true,
+        "duration_ms": 2445.25,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-p2_007-377844ba.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_011",
+        "query": "统计 2025 年第二季度各大区的销售额",
+        "passed": true,
+        "duration_ms": 2407.92,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_011-70dba973.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_019",
+        "query": "按大区统计销售额、订单数和销量",
+        "passed": true,
+        "duration_ms": 2368.57,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_019-8c0ebccc.json",
+        "missing_trace": false
+      },
+      {
+        "id": "exp_018",
+        "query": "统计华北地区的销售额、订单数和销量",
+        "passed": true,
+        "duration_ms": 2345.47,
+        "trace_path": "E:\\practical project\\shopkeeper-agent-backend\\traces\\2026-05-29\\eval-exp_018-4313dd95.json",
+        "missing_trace": false
+      }
+    ]
+  }
+}

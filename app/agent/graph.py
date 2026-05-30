@@ -36,6 +36,7 @@ from app.agent.nodes.filter_metric import filter_metric
 from app.agent.nodes.filter_table import filter_table
 from app.agent.nodes.generate_sql import generate_sql
 from app.agent.nodes.guard_query import guard_query
+from app.agent.nodes.keyword_expansion_cache import trace_keyword_cache_stats
 from app.agent.nodes.merge_retrieved_info import merge_retrieved_info
 from app.agent.nodes.recall_column import recall_column
 from app.agent.nodes.recall_metric import recall_metric
@@ -57,6 +58,20 @@ from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantReposit
 from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
 
 
+def build_trace_output(output: dict[str, Any], cache_stats: dict[str, int]) -> dict[str, Any]:
+    """构造仅用于 Trace 的节点输出，避免缓存统计进入 Agent State。"""
+
+    trace_output = dict(output)
+    has_activity = any(
+        value
+        for key, value in cache_stats.items()
+        if not key.endswith("_size")
+    )
+    if has_activity:
+        trace_output["cache_stats"] = cache_stats
+    return trace_output
+
+
 def trace_node(
     name: str,
     node_func: Callable[
@@ -69,28 +84,45 @@ def trace_node(
             return await node_func(state, runtime)
 
         trace_manager.start_step(name, dict(state))
-        try:
-            output = await node_func(state, runtime)
-        except Exception as exc:
+        embedding_client = runtime.context.get("embedding_client")
+        with embedding_client.trace_cache_stats() as embedding_stats, trace_keyword_cache_stats() as keyword_stats:
+            try:
+                output = await node_func(state, runtime)
+            except Exception as exc:
+                cache_stats = {
+                    **embedding_stats.to_dict(cache_size=len(getattr(embedding_client, "_cache", {}))),
+                    **keyword_stats.to_dict(),
+                }
+                trace_manager.end_step(
+                    name,
+                    output=build_trace_output(
+                        {
+                            "success": False,
+                            "error_type": state.get("error_type") or AgentErrorType.UNKNOWN_ERROR.value,
+                            "error_message": str(exc),
+                            "error_node": name,
+                            "recoverable": False,
+                            "suggested_action": state.get("suggested_action"),
+                        },
+                        cache_stats,
+                    ),
+                    error=str(exc),
+                )
+                raise
+
+            error_message = None
+            if isinstance(output, dict) and output.get("success") is False:
+                error_message = output.get("error_message")
+            cache_stats = {
+                **embedding_stats.to_dict(cache_size=len(getattr(embedding_client, "_cache", {}))),
+                **keyword_stats.to_dict(),
+            }
             trace_manager.end_step(
                 name,
-                output={
-                    "success": False,
-                    "error_type": state.get("error_type") or AgentErrorType.UNKNOWN_ERROR.value,
-                    "error_message": str(exc),
-                    "error_node": name,
-                    "recoverable": False,
-                    "suggested_action": state.get("suggested_action"),
-                },
-                error=str(exc),
+                output=build_trace_output(output, cache_stats),
+                error=error_message,
             )
-            raise
-
-        error_message = None
-        if isinstance(output, dict) and output.get("success") is False:
-            error_message = output.get("error_message")
-        trace_manager.end_step(name, output=output, error=error_message)
-        return output
+            return output
 
     return wrapped_node
 

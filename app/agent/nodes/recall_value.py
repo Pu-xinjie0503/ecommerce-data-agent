@@ -4,17 +4,16 @@
 从字段值全文索引中召回候选取值。
 """
 
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.prompts import PromptTemplate
+import re
+
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
 from app.agent.errors import AgentErrorType, build_error_state
-from app.agent.llm import llm
+from app.agent.nodes.keyword_expansion_cache import expand_keywords_with_cache
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.entities.value_info import ValueInfo
-from app.prompt.prompt_loader import load_prompt
 
 
 def normalize_value_candidates(texts: list[str]) -> list[str]:
@@ -118,8 +117,6 @@ def split_after_last_break(text: str) -> str:
 
 
 def split_multi_values(text: str) -> list[str]:
-    import re
-
     text = text.strip()
     if not text:
         return []
@@ -201,15 +198,12 @@ async def recall_value(
 
         value_es_repository = runtime.context["value_es_repository"]
 
-        prompt = PromptTemplate(
-            template=load_prompt("extend_keywords_for_value_recall"),
-            input_variables=["query"],
+        extended_keywords = await expand_keywords_with_cache(
+            recall_type="value",
+            prompt_name="extend_keywords_for_value_recall",
+            query=query,
+            keywords=keywords,
         )
-
-        output_parser = JsonOutputParser()
-        chain = prompt | llm | output_parser
-
-        extended_keywords = await chain.ainvoke({"query": query})
 
         value_candidates = normalize_value_candidates([query] + keywords + extended_keywords)
         logger.info(f"字段取值候选词: {value_candidates}")

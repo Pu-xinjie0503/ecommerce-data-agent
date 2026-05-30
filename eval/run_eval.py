@@ -1,5 +1,6 @@
 """轻量级问数 Agent 回归评估脚本。"""
 
+import argparse
 import asyncio
 import json
 import time
@@ -35,6 +36,17 @@ LATEST_JSON_PATH = REPORTS_DIR / "latest.json"
 LATEST_MD_PATH = REPORTS_DIR / "latest.md"
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="运行问数 Agent 回归评估。")
+    parser.add_argument("--cases", default=str(CASES_PATH), help="eval cases YAML 路径")
+    return parser.parse_args()
+
+
+def resolve_path(path: str | Path) -> Path:
+    path = Path(path)
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
 class EvalConfigError(ValueError):
     pass
 
@@ -45,8 +57,8 @@ class EvalQueryError(RuntimeError):
         self.trace_path = trace_path
 
 
-def load_cases() -> list[dict[str, Any]]:
-    with CASES_PATH.open("r", encoding="utf-8") as file:
+def load_cases(cases_path: Path = CASES_PATH) -> list[dict[str, Any]]:
+    with cases_path.open("r", encoding="utf-8") as file:
         data = yaml.safe_load(file)
 
     if isinstance(data, dict):
@@ -55,7 +67,7 @@ def load_cases() -> list[dict[str, Any]]:
         cases = data
 
     if not isinstance(cases, list) or not cases:
-        raise EvalConfigError("eval/cases.yaml 必须包含非空 cases 列表")
+        raise EvalConfigError(f"{cases_path} 必须包含非空 cases 列表")
 
     for index, case in enumerate(cases, start=1):
         if not isinstance(case, dict):
@@ -499,7 +511,9 @@ def print_summary(summary: dict[str, Any]) -> None:
 
 
 async def main() -> None:
-    cases = load_cases()
+    args = parse_args()
+    cases_path = resolve_path(args.cases)
+    cases = load_cases(cases_path)
     started_at = time.perf_counter()
     case_reports: list[dict[str, Any]] = []
 
@@ -516,6 +530,7 @@ async def main() -> None:
     summary = build_summary(case_reports, duration_seconds)
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "case_file": str(cases_path),
         "summary": summary,
         "cases": case_reports,
     }

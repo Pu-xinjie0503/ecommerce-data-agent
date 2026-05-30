@@ -4,16 +4,13 @@
 根据用户问题从指标向量知识库中召回候选指标。
 """
 
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.prompts import PromptTemplate
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
-from app.agent.llm import llm
+from app.agent.nodes.keyword_expansion_cache import expand_keywords_with_cache
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.entities.metric_info import MetricInfo
-from app.prompt.prompt_loader import load_prompt
 
 
 async def recall_metric(
@@ -33,15 +30,12 @@ async def recall_metric(
         embedding_client = runtime.context["embedding_client"]
         metric_qdrant_repository = runtime.context["metric_qdrant_repository"]
 
-        prompt = PromptTemplate(
-            template=load_prompt("extend_keywords_for_metric_recall"),
-            input_variables=["query"],
+        extended_keywords = await expand_keywords_with_cache(
+            recall_type="metric",
+            prompt_name="extend_keywords_for_metric_recall",
+            query=query,
+            keywords=keywords,
         )
-
-        output_parser = JsonOutputParser()
-        chain = prompt | llm | output_parser
-
-        extended_keywords = await chain.ainvoke({"query": query})
 
         keywords = set(keywords + extended_keywords)
 

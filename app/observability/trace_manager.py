@@ -171,6 +171,10 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
         if key in payload:
             summary[key] = safe_jsonable(payload.get(key))
 
+    if "cache_stats" in payload:
+        cache_stats = payload.get("cache_stats")
+        summary["cache_stats"] = dict(cache_stats) if isinstance(cache_stats, dict) else safe_jsonable(cache_stats)
+
     if "result" in payload:
         result = payload.get("result")
         if isinstance(result, list):

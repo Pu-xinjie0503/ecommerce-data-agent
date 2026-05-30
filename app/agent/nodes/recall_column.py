@@ -4,16 +4,13 @@
 根据关键词从字段向量知识库中召回候选字段。
 """
 
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.prompts import PromptTemplate
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
-from app.agent.llm import llm
+from app.agent.nodes.keyword_expansion_cache import expand_keywords_with_cache
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.entities.column_info import ColumnInfo
-from app.prompt.prompt_loader import load_prompt
 
 
 async def recall_column(
@@ -33,15 +30,12 @@ async def recall_column(
         column_qdrant_repository = runtime.context["column_qdrant_repository"]
         embedding_client = runtime.context["embedding_client"]
 
-        prompt = PromptTemplate(
-            template=load_prompt("extend_keywords_for_column_recall"),
-            input_variables=["query"],
+        extended_keywords = await expand_keywords_with_cache(
+            recall_type="column",
+            prompt_name="extend_keywords_for_column_recall",
+            query=query,
+            keywords=keywords,
         )
-
-        output_parser = JsonOutputParser()
-        chain = prompt | llm | output_parser
-
-        extended_keywords = await chain.ainvoke({"query": query})
 
         keywords = set(keywords + extended_keywords)
 

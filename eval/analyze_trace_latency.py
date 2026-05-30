@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 RECALL_STEP_NAMES = ("recall_column", "recall_metric", "recall_value")
+RECALL_STEP_NAMES_BY_TYPE = ("column", "metric", "value")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -24,6 +25,8 @@ def main() -> None:
     risk_flags: Counter[str] = Counter()
     missing_traces = 0
     parallel_checks = []
+
+    cache_accumulator = new_cache_accumulator()
 
     for case in cases:
         analyzed = analyze_case(case)
@@ -41,6 +44,8 @@ def main() -> None:
                 if step.get("status") == "failed":
                     step_errors[name] += 1
 
+        collect_cache_stats(analyzed["steps"], cache_accumulator)
+
         for flag in analyzed["risk_flags"]:
             risk_flags[flag] += 1
 
@@ -55,20 +60,27 @@ def main() -> None:
     step_stats = build_step_stats(step_durations, step_errors)
     summary = build_summary(report, analyzed_cases, case_durations, missing_traces)
     parallel_summary = summarize_parallel_recall(parallel_checks)
+    cache_stats = build_cache_stats(cache_accumulator)
+    baseline = read_optional_json(resolve_path(args.baseline)) if args.baseline else None
+    comparison = build_comparison(baseline, summary, step_stats, slowest_cases(analyzed_cases, args.top_n))
 
     output = {
         "source_report": str(report_path),
+        "baseline_report": str(resolve_path(args.baseline)) if args.baseline else None,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "validation_note": "本次 cache 验收使用 DeepSeek 官方 API / deepseek-chat；由于模型变化，pass_rate 仅用于链路验收，不作为同模型严格对比。",
         "summary": summary,
         "step_stats": step_stats,
         "slowest_cases": slowest_cases(analyzed_cases, args.top_n),
         "risk_flags": dict(risk_flags),
         "parallel_recall": parallel_summary,
+        "cache_stats": cache_stats,
+        "comparison": comparison,
     }
 
     today = datetime.now().strftime("%Y%m%d")
-    json_path = resolve_output_path(args.out_json, PROJECT_ROOT / "eval" / "reports" / f"performance_baseline_{today}.json")
-    md_path = resolve_output_path(args.out_md, PROJECT_ROOT / "eval" / f"performance_baseline_{today}.md")
+    json_path = resolve_output_path(args.out_json, PROJECT_ROOT / "eval" / "reports" / f"performance_cache_compare_{today}.json")
+    md_path = resolve_output_path(args.out_md, PROJECT_ROOT / "eval" / f"performance_cache_compare_{today}.md")
 
     json_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +97,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-json", default=None, help="输出 JSON 报告路径")
     parser.add_argument("--out-md", default=None, help="输出 Markdown 报告路径")
     parser.add_argument("--top-n", type=int, default=10, help="最慢 case 数量")
+    parser.add_argument("--baseline", default="eval/reports/performance_baseline_20260528.json", help="性能对比基线 JSON 路径")
     return parser.parse_args()
 
 
@@ -155,6 +168,126 @@ def analyze_parallel_recall(steps: list[dict[str, Any]]) -> dict[str, Any] | Non
             for item in intervals
         ],
     }
+
+
+def new_cache_accumulator() -> dict[str, Any]:
+    return {
+        "embedding": Counter(),
+        "keyword_expansion": Counter(),
+    }
+
+
+def collect_cache_stats(steps: list[dict[str, Any]], accumulator: dict[str, Any]) -> None:
+    for step in steps:
+        output_summary = step.get("output_summary") or {}
+        cache_stats = output_summary.get("cache_stats") or {}
+        if not isinstance(cache_stats, dict):
+            continue
+        for key, value in cache_stats.items():
+            number = int(to_float(value) or 0)
+            if key.startswith("embedding_cache_"):
+                if key.endswith("_size"):
+                    accumulator["embedding"][key] = max(accumulator["embedding"].get(key, 0), number)
+                else:
+                    accumulator["embedding"][key] += number
+            elif key.startswith("keyword_expand_cache_"):
+                accumulator["keyword_expansion"][key] += number
+
+
+def build_cache_stats(accumulator: dict[str, Any]) -> dict[str, Any]:
+    embedding = accumulator["embedding"]
+    keyword = accumulator["keyword_expansion"]
+    embedding_hit = embedding.get("embedding_cache_hit", 0)
+    embedding_miss = embedding.get("embedding_cache_miss", 0)
+    keyword_hit = sum(keyword.get(f"keyword_expand_cache_hit_{name}", 0) for name in RECALL_STEP_NAMES_BY_TYPE)
+    keyword_miss = sum(keyword.get(f"keyword_expand_cache_miss_{name}", 0) for name in RECALL_STEP_NAMES_BY_TYPE)
+
+    return {
+        "embedding": {
+            "embedding_cache_hit": embedding_hit,
+            "embedding_cache_miss": embedding_miss,
+            "embedding_cache_size": embedding.get("embedding_cache_size", 0),
+            "embedding_cache_hit_rate": hit_rate(embedding_hit, embedding_miss),
+        },
+        "keyword_expansion": {
+            recall_type: {
+                "hit": keyword.get(f"keyword_expand_cache_hit_{recall_type}", 0),
+                "miss": keyword.get(f"keyword_expand_cache_miss_{recall_type}", 0),
+                "hit_rate": hit_rate(
+                    keyword.get(f"keyword_expand_cache_hit_{recall_type}", 0),
+                    keyword.get(f"keyword_expand_cache_miss_{recall_type}", 0),
+                ),
+            }
+            for recall_type in RECALL_STEP_NAMES_BY_TYPE
+        },
+        "overall": {
+            "embedding_cache_hit_rate": hit_rate(embedding_hit, embedding_miss),
+            "keyword_expand_cache_hit": keyword_hit,
+            "keyword_expand_cache_miss": keyword_miss,
+            "keyword_expand_cache_hit_rate": hit_rate(keyword_hit, keyword_miss),
+        },
+    }
+
+
+def hit_rate(hit: int, miss: int) -> float:
+    total = hit + miss
+    return round(hit / total * 100, 2) if total else 0.0
+
+
+def read_optional_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return read_json(path)
+
+
+def build_comparison(
+    baseline: dict[str, Any] | None,
+    summary: dict[str, Any],
+    step_stats: list[dict[str, Any]],
+    current_slowest_cases: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not baseline:
+        return {"available": False}
+
+    baseline_summary = baseline.get("summary") or {}
+    baseline_steps = {row.get("name"): row for row in baseline.get("step_stats") or []}
+    current_steps = {row.get("name"): row for row in step_stats}
+    focused_nodes = ["recall_column", "recall_metric", "recall_value", "generate_sql"]
+
+    return {
+        "available": True,
+        "baseline_total_avg_ms": baseline_summary.get("avg_duration_ms"),
+        "current_total_avg_ms": summary.get("avg_duration_ms"),
+        "total_avg_delta_ms": delta(summary.get("avg_duration_ms"), baseline_summary.get("avg_duration_ms")),
+        "baseline_p95_ms": baseline_summary.get("p95_duration_ms"),
+        "current_p95_ms": summary.get("p95_duration_ms"),
+        "p95_delta_ms": delta(summary.get("p95_duration_ms"), baseline_summary.get("p95_duration_ms")),
+        "baseline_pass_rate": baseline_summary.get("pass_rate"),
+        "current_pass_rate": summary.get("pass_rate"),
+        "pass_rate_delta": delta(summary.get("pass_rate"), baseline_summary.get("pass_rate")),
+        "node_deltas": [
+            {
+                "name": name,
+                "baseline_avg_ms": (baseline_steps.get(name) or {}).get("avg_ms"),
+                "current_avg_ms": (current_steps.get(name) or {}).get("avg_ms"),
+                "avg_delta_ms": delta(
+                    (current_steps.get(name) or {}).get("avg_ms"),
+                    (baseline_steps.get(name) or {}).get("avg_ms"),
+                ),
+            }
+            for name in focused_nodes
+        ],
+        "baseline_slowest_cases": baseline.get("slowest_cases") or [],
+        "current_slowest_cases": current_slowest_cases,
+    }
+
+
+def delta(current: Any, baseline: Any) -> float | None:
+    current_value = to_float(current)
+    baseline_value = to_float(baseline)
+    if current_value is None or baseline_value is None:
+        return None
+    return round(current_value - baseline_value, 2)
 
 
 def build_summary(report: dict[str, Any], cases: list[dict[str, Any]], durations: list[float], missing_traces: int) -> dict[str, Any]:
@@ -231,7 +364,9 @@ def render_markdown(output: dict[str, Any], top_n: int) -> str:
         "# Agent 性能 Baseline 报告",
         "",
         f"> 生成时间：{output['generated_at']}  ",
-        f"> 来源报告：`{output['source_report']}`",
+        f"> 来源报告：`{output['source_report']}`  ",
+        f"> 对比基线：`{output.get('baseline_report')}`  ",
+        f"> 验收说明：{output.get('validation_note')}",
         "",
         "## 1. 总览",
         "",
@@ -299,13 +434,76 @@ def render_markdown(output: dict[str, Any], top_n: int) -> str:
         f"| 三路耗时平均总和 ms | {parallel.get('avg_duration_sum_ms')} |",
         f"| 三路 wall time 平均 ms | {parallel.get('avg_wall_time_ms')} |",
         f"| 平均估算节省 ms | {parallel.get('avg_estimated_saved_ms')} |",
+    ])
+
+    cache_stats = output.get("cache_stats") or {}
+    embedding_cache = cache_stats.get("embedding") or {}
+    keyword_cache = cache_stats.get("keyword_expansion") or {}
+    lines.extend([
         "",
-        "## 6. 初步结论",
+        "## 6. Cache Stats",
+        "",
+        "### 6.1 Embedding Cache",
+        "",
+        "| 指标 | 值 |",
+        "|---|---:|",
+        f"| embedding_cache_hit | {embedding_cache.get('embedding_cache_hit')} |",
+        f"| embedding_cache_miss | {embedding_cache.get('embedding_cache_miss')} |",
+        f"| embedding_cache_size | {embedding_cache.get('embedding_cache_size')} |",
+        f"| embedding_cache_hit_rate | {embedding_cache.get('embedding_cache_hit_rate')}% |",
+        "",
+        "### 6.2 Keyword Expansion Cache",
+        "",
+        "| recall_type | hit | miss | hit_rate |",
+        "|---|---:|---:|---:|",
+    ])
+    for recall_type in RECALL_STEP_NAMES_BY_TYPE:
+        row = keyword_cache.get(recall_type) or {}
+        lines.append(
+            f"| {recall_type} | {row.get('hit')} | {row.get('miss')} | {row.get('hit_rate')}% |"
+        )
+
+    lines.extend([
+        "",
+        "### 6.3 适用范围说明",
+        "",
+        "- 当前 cache 是进程内缓存，不是 Redis；缓存内容不会跨进程、跨服务实例共享。",
+        "- 本次 55 条 eval 是单进程连续运行，因此结果体现的是同一进程内关键词扩展与 embedding 的复用收益。",
+        "- 对完全冷启动的单条请求，缓存尚未预热，收益会小一些。",
+        "- 对重复问题、高频指标、高频字段和多用户长期运行场景，缓存复用更充分，收益会更明显。",
+    ])
+
+    comparison = output.get("comparison") or {}
+    lines.extend([
+        "",
+        "## 7. Baseline 对比",
+        "",
+    ])
+    if comparison.get("available"):
+        lines.extend([
+            "| 指标 | Before | After | Delta |",
+            "|---|---:|---:|---:|",
+            f"| total avg ms | {comparison.get('baseline_total_avg_ms')} | {comparison.get('current_total_avg_ms')} | {comparison.get('total_avg_delta_ms')} |",
+            f"| P95 ms | {comparison.get('baseline_p95_ms')} | {comparison.get('current_p95_ms')} | {comparison.get('p95_delta_ms')} |",
+            f"| pass_rate | {comparison.get('baseline_pass_rate')}% | {comparison.get('current_pass_rate')}% | {comparison.get('pass_rate_delta')} |",
+            "",
+            "| 节点 | Before avg ms | After avg ms | Delta |",
+            "|---|---:|---:|---:|",
+        ])
+        for row in comparison.get("node_deltas") or []:
+            lines.append(
+                f"| {row.get('name')} | {row.get('baseline_avg_ms')} | {row.get('current_avg_ms')} | {row.get('avg_delta_ms')} |"
+            )
+    else:
+        lines.append("未找到可用 baseline JSON，跳过前后对比。")
+
+    lines.extend([
+        "",
+        "## 8. 初步结论",
         "",
         "- 若 P95 最高的节点集中在 LLM 调用，应优先减少不必要的模型调用和 prompt 长度。",
         "- 若召回节点耗时高，应优先检查 Embedding、Qdrant、Elasticsearch 和并行召回情况。",
-        "- 若 validate_sql / run_sql 风险较多，应结合 EXPLAIN 结果完善索引设计。",
-        "- 本报告只做性能 baseline，不引入 Rerank、Memory 或 SQL 结果缓存。",
+        "- 当前阶段只评估召回链路缓存，不引入 Rerank、Memory、SQL 结果缓存或 MySQL 索引改造。",
         "",
     ])
     return "\n".join(lines)
