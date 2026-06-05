@@ -42,6 +42,10 @@ BROAD_ANALYSIS_PATTERNS = (
     r"^(销售|订单)情况怎么样$",
     r"^(整体)?(销售|订单)情况(如何|怎么样)$",
 )
+DIMENSION_ANALYSIS_PATTERNS = (
+    r"^(帮我)?(看一下|看看|查看|分析一下)?各?(品牌|品类|商品品类|大区|地区|会员等级|会员)(的)?(情况|表现|概况|趋势)$",
+    r"^各?(品牌|品类|商品品类|大区|地区|会员等级|会员)(情况|表现|概况|趋势)(如何|怎么样)?$",
+)
 DIMENSION_WORDS = (
     "大区",
     "地区",
@@ -123,6 +127,13 @@ def check_query_clarification(query: str) -> ClarificationResult | None:
             clarification_options=["最近7天", "最近30天", "最近一个自然月"],
         )
 
+    if needs_dimension_metric_clarification(normalized_query):
+        return ClarificationResult(
+            clarification_type="metric_ambiguity",
+            clarification_question="你想按销售额、销量，还是订单数来看各维度情况？",
+            clarification_options=["销售额", "销量", "订单数"],
+        )
+
     if needs_broad_analysis_clarification(normalized_query):
         return ClarificationResult(
             clarification_type="broad_analysis_request",
@@ -143,6 +154,12 @@ def needs_metric_clarification(query: str) -> bool:
 
 def needs_time_clarification(query: str) -> bool:
     return any(word in query for word in RECENT_WORDS) and not has_clear_time_range(query)
+
+
+def needs_dimension_metric_clarification(query: str) -> bool:
+    if has_explicit_metric(query):
+        return False
+    return any(re.search(pattern, query) for pattern in DIMENSION_ANALYSIS_PATTERNS)
 
 
 def needs_broad_analysis_clarification(query: str) -> bool:
