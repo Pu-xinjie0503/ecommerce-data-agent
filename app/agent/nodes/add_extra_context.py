@@ -3,6 +3,8 @@ from datetime import date
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
+from app.agent.errors import build_error_state
+from app.agent.exceptions import ExternalServiceError
 from app.agent.state import DataAgentState, DateInfoState, DBInfoState
 from app.core.log import logger
 
@@ -41,6 +43,19 @@ async def add_extra_context(
         return {
             "date_info": date_info,
             "db_info": db_info,
+        }
+
+    except ExternalServiceError as e:
+        logger.error(f"{step} external service failed: {e}")
+        writer({"type": "progress", "step": step, "status": "error"})
+        return {
+            **build_error_state(
+                error_type=e.error_type,
+                error_message=str(e),
+                error_node="add_extra_context",
+                recoverable=True,
+                suggested_action="请稍后重试，或检查 MySQL 服务状态与超时配置。",
+            ),
         }
 
     except Exception as e:

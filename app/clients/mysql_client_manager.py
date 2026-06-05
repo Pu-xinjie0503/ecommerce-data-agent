@@ -28,7 +28,7 @@ class MySQLClientManager:
         return (
             f"mysql+asyncmy://{self.config.user}:{self.config.password}"
             f"@{self.config.host}:{self.config.port}/{self.config.database}"
-            f"?charset=utf8mb4"
+            f"?charset=utf8mb4&connect_timeout={self.config.connect_timeout_seconds}"
         )
 
     def init(self):

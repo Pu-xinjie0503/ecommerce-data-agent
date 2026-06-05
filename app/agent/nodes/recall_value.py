@@ -10,6 +10,7 @@ from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
 from app.agent.errors import AgentErrorType, build_error_state
+from app.agent.exceptions import ExternalServiceError, classify_es_exception
 from app.agent.nodes.keyword_expansion_cache import expand_keywords_with_cache
 from app.agent.state import DataAgentState
 from app.core.log import logger
@@ -198,12 +199,26 @@ async def recall_value(
 
         value_es_repository = runtime.context["value_es_repository"]
 
-        extended_keywords = await expand_keywords_with_cache(
-            recall_type="value",
-            prompt_name="extend_keywords_for_value_recall",
-            query=query,
-            keywords=keywords,
-        )
+        try:
+            extended_keywords = await expand_keywords_with_cache(
+                recall_type="value",
+                prompt_name="extend_keywords_for_value_recall",
+                query=query,
+                keywords=keywords,
+            )
+        except ExternalServiceError as e:
+            logger.error(f"{step} LLM keyword expansion failed: {e}")
+            writer({"type": "progress", "step": step, "status": "error"})
+            return {
+                "retrieved_value_infos": [],
+                **build_error_state(
+                    error_type=e.error_type,
+                    error_message=str(e),
+                    error_node="recall_value",
+                    recoverable=True,
+                    suggested_action="请稍后重试，或检查 LLM 服务状态、限流和超时配置。",
+                ),
+            }
 
         value_candidates = normalize_value_candidates([query] + keywords + extended_keywords)
         logger.info(f"字段取值候选词: {value_candidates}")
@@ -214,7 +229,22 @@ async def recall_value(
             logger.info(f"域期望: {expected_domains}")
             logger.info(f"字段取值 grounding 目标: {domain_filter_values}")
 
-        exact_value_infos = await value_es_repository.search_exact_values(value_candidates)
+        try:
+            exact_value_infos = await value_es_repository.search_exact_values(value_candidates)
+        except Exception as e:
+            error_type = classify_es_exception(e)
+            logger.error(f"{step} es exact search failed: {e}")
+            writer({"type": "progress", "step": step, "status": "error"})
+            return {
+                "retrieved_value_infos": [],
+                **build_error_state(
+                    error_type=error_type,
+                    error_message=str(e),
+                    error_node="recall_value",
+                    recoverable=True,
+                    suggested_action="请稍后重试，或检查 Elasticsearch 服务状态与超时配置。",
+                ),
+            }
 
         if exact_value_infos:
             retrieved_value_infos = dedupe_value_infos(exact_value_infos)
@@ -224,7 +254,22 @@ async def recall_value(
             fuzzy_value_infos: list[ValueInfo] = []
 
             for keyword in value_candidates:
-                fuzzy_value_infos.extend(await value_es_repository.search(keyword))
+                try:
+                    fuzzy_value_infos.extend(await value_es_repository.search(keyword))
+                except Exception as e:
+                    error_type = classify_es_exception(e)
+                    logger.error(f"{step} es fuzzy search failed: {e}")
+                    writer({"type": "progress", "step": step, "status": "error"})
+                    return {
+                        "retrieved_value_infos": [],
+                        **build_error_state(
+                            error_type=error_type,
+                            error_message=str(e),
+                            error_node="recall_value",
+                            recoverable=True,
+                            suggested_action="请稍后重试，或检查 Elasticsearch 服务状态与超时配置。",
+                        ),
+                    }
 
             retrieved_value_infos = dedupe_value_infos(fuzzy_value_infos)
 

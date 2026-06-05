@@ -2,6 +2,7 @@ from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
 from app.agent.errors import AgentErrorType, build_error_state, clear_error_state
+from app.agent.exceptions import ExternalServiceError
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
@@ -37,6 +38,20 @@ async def validate_sql(
             }
 
             return result
+
+        except ExternalServiceError as e:
+            logger.error(f"SQL 校验依赖服务异常：{str(e)}")
+            writer({"type": "progress", "step": step, "status": "error"})
+            return {
+                "error": str(e),
+                **build_error_state(
+                    error_type=e.error_type,
+                    error_message=str(e),
+                    error_node="validate_sql",
+                    recoverable=True,
+                    suggested_action="请稍后重试，或检查 MySQL 服务状态与超时配置。",
+                ),
+            }
 
         except Exception as e:
             logger.info(f"SQL语法错误：{str(e)}")

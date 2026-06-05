@@ -1,9 +1,14 @@
+import asyncio
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import TextClause
+
+from app.agent.exceptions import MySQLTimeoutError
+from app.conf.app_config import app_config
 
 
 class DWMySQLRepository:
@@ -28,14 +33,25 @@ class DWMySQLRepository:
 
         return value
     
+    async def _execute_with_timeout(self, statement: TextClause, params: dict | None = None):
+        try:
+            return await asyncio.wait_for(
+                self.session.execute(statement, params or {}),
+                timeout=app_config.db_dw.query_timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            raise MySQLTimeoutError(
+                f"DW MySQL 查询超过 {app_config.db_dw.query_timeout_seconds} 秒"
+            ) from exc
+
     async def explain(self, sql: str) -> list[dict]:
         explain_sql = f"explain {sql}"
 
         try:
-            await self.session.execute(text("SET SESSION sql_notes = 0"))
-            result = await self.session.execute(text(explain_sql))
+            await self._execute_with_timeout(text("SET SESSION sql_notes = 0"))
+            result = await self._execute_with_timeout(text(explain_sql))
         finally:
-            await self.session.execute(text("SET SESSION sql_notes = 1"))
+            await self._execute_with_timeout(text("SET SESSION sql_notes = 1"))
 
         return [self._normalize_explain_row(dict(row)) for row in result.mappings().fetchall()]
 
@@ -87,7 +103,7 @@ class DWMySQLRepository:
     async def run(self, sql: str) -> list[dict]:
         """执行 SQL，并返回字典列表结果"""
 
-        result = await self.session.execute(text(sql))
+        result = await self._execute_with_timeout(text(sql))
         return [dict(row) for row in result.mappings().fetchall()]
 
     async def get_column_types(self, table_name: str) -> dict[str, str]:
@@ -95,7 +111,7 @@ class DWMySQLRepository:
 
         sql = f"SHOW COLUMNS FROM {table}"
 
-        result = await self.session.execute(text(sql))
+        result = await self._execute_with_timeout(text(sql))
         rows = result.mappings().all()
 
         return {row["Field"]: row["Type"] for row in rows}
@@ -106,7 +122,7 @@ class DWMySQLRepository:
 
         sql = f"SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL LIMIT {limit}"
 
-        result = await self.session.execute(text(sql))
+        result = await self._execute_with_timeout(text(sql))
         values = result.scalars().all()
 
         return [self._to_json_safe(value) for value in values]
@@ -115,7 +131,7 @@ class DWMySQLRepository:
         """读取当前数仓数据库的方言和版本，供 SQL 生成提示词使用"""
 
         sql = "select version()"
-        result = await self.session.execute(text(sql))
+        result = await self._execute_with_timeout(text(sql))
         version = result.scalar()
 
         dialect = self.session.bind.dialect.name

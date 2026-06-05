@@ -15,7 +15,10 @@ class ESClientManager:
         return f"http://{self.es_config.host}:{self.es_config.port}"
 
     def init(self):
-        self.client = AsyncElasticsearch(hosts=[self._get_url()])
+        self.client = AsyncElasticsearch(
+            hosts=[self._get_url()],
+            request_timeout=self.es_config.timeout_seconds,
+        )
 
     async def close(self):
         if self.client:

@@ -5,6 +5,7 @@
 并统一包装成 SSE 文本返回给路由层。
 """
 
+import asyncio
 import json
 import uuid
 
@@ -74,7 +75,8 @@ class QueryService:
                 elif stream_mode == "values":
                     final_state = dict(chunk)
 
-            trace_manager.finish("success")
+            trace_status = "failed" if final_state.get("error_type") else "success"
+            trace_manager.finish(trace_status)
             trace_path = trace_manager.save()
             final_response = build_final_response(
                 request_id=request_id,
@@ -86,11 +88,16 @@ class QueryService:
         except Exception as e:
             trace_manager.finish("failed")
             trace_path = trace_manager.save()
+            error_type = (
+                AgentErrorType.API_REQUEST_TIMEOUT.value
+                if isinstance(e, asyncio.TimeoutError)
+                else AgentErrorType.API_INTERNAL_ERROR.value
+            )
             error = build_final_response(
                 request_id=request_id,
                 state={
                     "success": False,
-                    "error_type": AgentErrorType.UNKNOWN_ERROR.value,
+                    "error_type": error_type,
                     "error_message": str(e),
                     "error_node": "query_service",
                     "recoverable": False,

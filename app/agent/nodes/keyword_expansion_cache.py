@@ -8,7 +8,7 @@ from typing import Iterator, Literal
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
 
-from app.agent.llm import llm
+from app.agent.llm import ainvoke_llm_chain, llm
 from app.prompt.prompt_loader import load_prompt
 
 RecallType = Literal["column", "metric", "value"]
@@ -135,7 +135,8 @@ async def expand_keywords_with_cache(
     )
     output_parser = JsonOutputParser()
     chain = prompt | llm | output_parser
-    expanded_keywords = await chain.ainvoke({"query": query})
+    llm_result = await ainvoke_llm_chain(chain, {"query": query})
+    expanded_keywords = llm_result.value
 
     if isinstance(expanded_keywords, list):
         _set_cached_keywords(cache_key, expanded_keywords)

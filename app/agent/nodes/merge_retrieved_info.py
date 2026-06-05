@@ -1,6 +1,8 @@
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
+from app.agent.errors import build_error_state
+from app.agent.exceptions import ExternalServiceError
 from app.agent.state import (
     ColumnInfoState,
     DataAgentState,
@@ -50,6 +52,10 @@ async def merge_retrieved_info(
     writer = runtime.stream_writer
     step = "合并召回信息"
     writer({"type": "progress", "step": step, "status": "running"})
+
+    if state.get("error_type"):
+        writer({"type": "progress", "step": step, "status": "error"})
+        return {}
 
     try:
         retrieved_column_infos: list[ColumnInfo] = state["retrieved_column_infos"]
@@ -185,6 +191,19 @@ async def merge_retrieved_info(
             "table_infos": table_infos,
             "metric_infos": metric_infos,
         }
+    except ExternalServiceError as e:
+        logger.error(f"{step} external service failed: {e}")
+        writer({"type": "progress", "step": step, "status": "error"})
+        return {
+            **build_error_state(
+                error_type=e.error_type,
+                error_message=str(e),
+                error_node="merge_retrieved_info",
+                recoverable=True,
+                suggested_action="请稍后重试，或检查 MySQL 元数据服务状态与超时配置。",
+            ),
+        }
+
     except Exception as e:
         logger.error(f"{step} failed: {e}")
         writer({"type": "progress", "step": step, "status": "error"})

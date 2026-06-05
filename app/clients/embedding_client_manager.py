@@ -7,6 +7,7 @@ from typing import Any, Iterator, List
 
 import httpx
 
+from app.agent.exceptions import EmbeddingServiceError, EmbeddingTimeoutError
 from app.conf.app_config import EmbeddingConfig, app_config
 
 
@@ -110,12 +111,27 @@ class EmbeddingClientManager:
     def init(self):
         self.client = httpx.AsyncClient(
             base_url=self._get_url(),
-            timeout=120,
+            timeout=self.config.timeout_seconds,
         )
 
     async def close(self):
         if self.client:
             await self.client.aclose()
+
+    async def _post_embed(self, inputs: str | list[str]) -> Any:
+        if self.client is None:
+            raise RuntimeError("Embedding client 未初始化")
+        try:
+            resp = await self.client.post(
+                "/embed",
+                json={"inputs": inputs},
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.TimeoutException as exc:
+            raise EmbeddingTimeoutError(f"Embedding 请求超过 {self.config.timeout_seconds} 秒") from exc
+        except httpx.HTTPError as exc:
+            raise EmbeddingServiceError(str(exc)) from exc
 
     async def aembed_query(self, text: str) -> List[float]:
         if self.client is None:
@@ -128,13 +144,7 @@ class EmbeddingClientManager:
             return list(cached)
 
         self._record_miss()
-        resp = await self.client.post(
-            "/embed",
-            json={"inputs": text},
-        )
-        resp.raise_for_status()
-
-        data = resp.json()
+        data = await self._post_embed(text)
 
         # TEI 对单条文本有时返回 [float, float, ...]
         # 对多条文本返回 [[float, float, ...], ...]
@@ -171,13 +181,7 @@ class EmbeddingClientManager:
             miss_indices_by_key[cache_key].append(index)
 
         if miss_texts:
-            resp = await self.client.post(
-                "/embed",
-                json={"inputs": miss_texts},
-            )
-            resp.raise_for_status()
-
-            data = resp.json()
+            data = await self._post_embed(miss_texts)
             embeddings = self._normalize_document_embeddings(data, len(miss_texts))
 
             for text, embedding in zip(miss_texts, embeddings):

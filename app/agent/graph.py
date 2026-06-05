@@ -218,24 +218,47 @@ graph_builder.add_conditional_edges(
 )
 
 
-# 生成 SQL 后进入校验
-graph_builder.add_edge("generate_sql", "validate_sql")
-
-
-# SQL 校验通过：直接执行
-# SQL 校验失败：进入修正节点
+# 生成 SQL 后：成功进入校验，LLM/解析等失败直接结束，避免下游覆盖原始错误类型
 graph_builder.add_conditional_edges(
-    source="validate_sql",
-    path=lambda state: "run_sql" if state.get("error") is None else "correct_sql",
+    source="generate_sql",
+    path=lambda state: END if state.get("error_type") else "validate_sql",
     path_map={
-        "run_sql": "run_sql",
-        "correct_sql": "correct_sql",
+        END: END,
+        "validate_sql": "validate_sql",
     },
 )
 
 
-# 修正后的 SQL 再执行
-graph_builder.add_edge("correct_sql", "run_sql")
+# SQL 校验通过：直接执行
+# 只有 SQL 语法校验失败进入修正；MySQL 等外部错误直接结束
+def route_after_validate_sql(state: DataAgentState):
+    if state.get("error") is None:
+        return "run_sql"
+    if state.get("error_type") == AgentErrorType.SQL_VALIDATION_FAILED.value:
+        return "correct_sql"
+    return END
+
+
+graph_builder.add_conditional_edges(
+    source="validate_sql",
+    path=route_after_validate_sql,
+    path_map={
+        "run_sql": "run_sql",
+        "correct_sql": "correct_sql",
+        END: END,
+    },
+)
+
+
+# 修正 SQL 后：成功再执行；修正失败直接结束
+graph_builder.add_conditional_edges(
+    source="correct_sql",
+    path=lambda state: END if state.get("error_type") else "run_sql",
+    path_map={
+        END: END,
+        "run_sql": "run_sql",
+    },
+)
 
 
 # SQL 执行结束，整条图结束

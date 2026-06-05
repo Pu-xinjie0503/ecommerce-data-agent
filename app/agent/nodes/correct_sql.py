@@ -5,7 +5,8 @@ from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
 from app.agent.errors import AgentErrorType, build_error_state, clear_error_state
-from app.agent.llm import llm
+from app.agent.exceptions import ExternalServiceError
+from app.agent.llm import ainvoke_llm_chain, llm
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.prompt.prompt_loader import load_prompt
@@ -47,7 +48,8 @@ async def correct_sql(
         output_parser = StrOutputParser()
         chain = prompt | llm | output_parser
 
-        result = await chain.ainvoke(
+        llm_result = await ainvoke_llm_chain(
+            chain,
             {
                 "table_infos": yaml.dump(
                     table_infos,
@@ -72,7 +74,12 @@ async def correct_sql(
                 "query": query,
                 "sql": sql,
                 "error": error,
-            }
+            },
+        )
+        result = llm_result.value
+        logger.info(
+            f"LLM 校正 SQL 调用完成: wait_ms={llm_result.wait_ms:.2f} "
+            f"call_ms={llm_result.call_ms:.2f} max_concurrency={llm_result.max_concurrency}"
         )
 
         raw_sql = result.strip()
@@ -89,7 +96,24 @@ async def correct_sql(
         return {
             "sql": clean_sql,
             "error": None,
+            "llm_wait_ms": llm_result.wait_ms,
+            "llm_call_ms": llm_result.call_ms,
+            "llm_max_concurrency": llm_result.max_concurrency,
             **clear_error_state(success=True),
+        }
+
+    except ExternalServiceError as e:
+        logger.error(f"{step} external service failed: {e}")
+        writer({"type": "progress", "step": step, "status": "error"})
+        return {
+            "error": str(e),
+            **build_error_state(
+                error_type=e.error_type,
+                error_message=str(e),
+                error_node="correct_sql",
+                recoverable=True,
+                suggested_action="请稍后重试，或检查 LLM 服务状态、限流和超时配置。",
+            ),
         }
 
     except Exception as e:

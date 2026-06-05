@@ -32,6 +32,8 @@ class DBConfig:
     user: str
     password: str
     database: str
+    connect_timeout_seconds: int = 10
+    query_timeout_seconds: int = 10
 
 
 @dataclass
@@ -39,6 +41,7 @@ class QdrantConfig:
     host: str
     port: int
     embedding_size: int
+    timeout_seconds: int = 5
 
 
 @dataclass
@@ -46,6 +49,7 @@ class EmbeddingConfig:
     host: str
     port: int
     model: str
+    timeout_seconds: int = 10
 
 
 @dataclass
@@ -53,6 +57,7 @@ class ESConfig:
     host: str
     port: int
     index_name: str
+    timeout_seconds: int = 5
 
 
 @dataclass
@@ -60,6 +65,9 @@ class LLMConfig:
     model_name: str
     api_key: str
     base_url: str
+    timeout_seconds: int = 30
+    max_concurrency: int = 3
+    slot_timeout_seconds: int = 30
 
 
 @dataclass

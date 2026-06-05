@@ -2,6 +2,7 @@ from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
 from app.agent.errors import AgentErrorType, build_error_state, clear_error_state
+from app.agent.exceptions import ExternalServiceError
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.utils.sql_parser import extract_sql
@@ -43,6 +44,20 @@ async def run_sql(
         return {
             "result": result,
             **result_state,
+        }
+
+    except ExternalServiceError as e:
+        logger.error(f"{step} external service failed: {e}")
+        writer({"type": "progress", "step": step, "status": "error"})
+        return {
+            "result": None,
+            **build_error_state(
+                error_type=e.error_type,
+                error_message=str(e),
+                error_node="run_sql",
+                recoverable=True,
+                suggested_action="请稍后重试，或检查 MySQL 服务状态与超时配置。",
+            ),
         }
 
     except Exception as e:

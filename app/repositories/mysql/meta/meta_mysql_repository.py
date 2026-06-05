@@ -1,5 +1,11 @@
+import asyncio
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from sqlalchemy.sql.elements import TextClause
+
+from app.agent.exceptions import MySQLExecutionError, MySQLTimeoutError
+from app.conf.app_config import app_config
 
 from app.entities.column_info import ColumnInfo
 from app.entities.column_metric import ColumnMetric
@@ -14,6 +20,19 @@ from app.repositories.mysql.meta.mappers.table_info_mapper import TableInfoMappe
 class MetaMySQLRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    async def _execute_with_timeout(self, statement: TextClause, params: dict | None = None):
+        try:
+            return await asyncio.wait_for(
+                self.session.execute(statement, params or {}),
+                timeout=app_config.db_meta.query_timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            raise MySQLTimeoutError(
+                f"Meta MySQL 查询超过 {app_config.db_meta.query_timeout_seconds} 秒"
+            ) from exc
+        except Exception as exc:
+            raise MySQLExecutionError(str(exc)) from exc
 
     async def save_table_infos(self, table_infos: list[TableInfo]):
         for table_info in table_infos:
@@ -44,7 +63,7 @@ class MetaMySQLRepository:
         where id = :column_id
         """
 
-        result = await self.session.execute(
+        result = await self._execute_with_timeout(
             text(sql),
             {"column_id": column_id},
         )
@@ -65,7 +84,7 @@ class MetaMySQLRepository:
         where id = :table_id
         """
 
-        result = await self.session.execute(
+        result = await self._execute_with_timeout(
             text(sql),
             {"table_id": table_id},
         )
@@ -87,7 +106,7 @@ class MetaMySQLRepository:
           and role in ('primary_key', 'foreign_key')
         """
 
-        result = await self.session.execute(
+        result = await self._execute_with_timeout(
             text(sql),
             {"table_id": table_id},
         )

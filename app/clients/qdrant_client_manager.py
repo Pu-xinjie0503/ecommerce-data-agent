@@ -16,7 +16,10 @@ class QdrantClientManager:
         return f"http://{self.qdrant_config.host}:{self.qdrant_config.port}"
 
     def init(self):
-        self.client = AsyncQdrantClient(url=self._get_url())
+        self.client = AsyncQdrantClient(
+            url=self._get_url(),
+            timeout=self.qdrant_config.timeout_seconds,
+        )
 
     async def close(self):
         if self.client:

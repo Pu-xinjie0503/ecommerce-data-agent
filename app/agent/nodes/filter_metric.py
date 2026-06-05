@@ -83,6 +83,10 @@ async def filter_metric(
 
     writer({"type": "progress", "step": step, "status": "running"})
 
+    if state.get("error_type"):
+        writer({"type": "progress", "step": step, "status": "error"})
+        return {}
+
     try:
         query = state["query"]
         metric_infos = state.get("metric_infos", [])

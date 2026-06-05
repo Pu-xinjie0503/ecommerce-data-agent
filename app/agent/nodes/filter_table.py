@@ -180,6 +180,10 @@ async def filter_table(
 
     writer({"type": "progress", "step": step, "status": "running"})
 
+    if state.get("error_type"):
+        writer({"type": "progress", "step": step, "status": "error"})
+        return {}
+
     try:
         query = state["query"]
         table_infos = state.get("table_infos", [])
