@@ -264,7 +264,6 @@ uv run python -m app.scripts.build_meta_knowledge
 
 ## 6. 示例问题与返回结果截图
 
-> 这里先保留占位，后续请粘贴前端截图、接口返回截图或 SQL 执行结果截图。
 
 ### 示例 1：地区销售额
 
@@ -343,35 +342,47 @@ eval/reports/latest.json
 ```
 
 
-## 8. 已知不足与后续优化
+## 8. 后端性能与 Agent 工程化增强
 
-当前项目已经具备从自然语言 query 到 SQL 执行的完整链路，但仍有一些待优化点：
+面试后，项目进一步补充了后端性能观测与稳定性治理能力，重点不再只是提升 NL2SQL case 通过率，而是让 Agent 查询链路更可排查、可压测、可兜底。
 
-1. **复杂时间表达仍需增强**
-   - 例如“最近三个月”“上周同期”“环比”“同比”等时间语义，需要更稳定的日期解析和边界生成。
+- **SQL EXPLAIN Trace**：在 SQL 校验阶段采集 EXPLAIN 执行计划，将 `type/key/rows/Extra` 以及 `FULL_TABLE_SCAN`、`NO_INDEX_USED`、`USING_TEMPORARY`、`USING_FILESORT` 等风险标记写入 Trace 和性能报告，用于定位潜在 SQL 执行风险。
+- **性能 baseline**：基于 55 条 eval case 统计端到端耗时、节点耗时和 P50/P90/P95，确认当前主要耗时集中在 LLM SQL 生成与召回链路，而不是 MySQL 查询执行。
+- **召回链路缓存**：实现进程内 bounded LRU cache，包括 Embedding Cache 和 Keyword Expansion Cache，减少重复 TEI / LLM 调用；该缓存用于优化 Agent 召回链路，不是 Redis，也不是 SQL 查询结果缓存。
+- **边界治理增强**：补充中文写库意图拦截，如“更新表”“把字段改成”等；对“看一下各品牌情况”这类缺少明确指标的问题触发澄清，避免模型强行生成 SQL。
+- **API benchmark**：新增 `/api/query` 压测脚本，支持并发请求、P50/P90/P95/P99、technical error rate、业务分支分布等统计。
+- **外部依赖兜底**：为 LLM、Embedding、Qdrant、Elasticsearch、MySQL 调用增加 timeout，并为 LLM 调用增加并发限制，避免高并发时打爆模型服务。
+- **错误类型细分**：区分 `llm_timeout`、`embedding_timeout`、`mysql_timeout`、`llm_busy` 等系统错误，以及 `unsafe_query`、`value_grounding_failed`、`need_clarification` 等预期业务分支。
 
-2. **指标口径治理可以更严格**
-   - 当前通过指标元数据和召回过滤降低口径漂移，后续可引入更结构化的指标 DSL 或 metric registry。
+## 9. 已知不足与后续优化
 
-3. **SQL 语义正确性仍依赖 eval 覆盖**
+当前项目已经具备从自然语言 query 到 SQL 执行的完整链路，并补充了性能观测、缓存、timeout 和错误分类等工程化能力，但整体仍是工程化增强版原型，距离生产级完备系统仍有一些待优化点：
+
+1. **性能优化优先级需要基于观测数据判断**
+   - 当前本地数据量下，`validate_sql` 和 `run_sql` 基本是毫秒级，主要性能瓶颈不在 MySQL SQL 执行阶段，而在 LLM 调用和字段 / 指标 / 字段值召回链路。
+
+2. **MySQL 索引优化不是当前最优先方向**
+   - 现阶段不应盲目加索引；后续如果数据量扩大，可以基于 EXPLAIN risk flags、慢查询日志和真实业务访问模式，再有针对性地做索引优化。
+
+3. **Redis 分布式缓存仍是生产化方向**
+   - 当前实现的是单进程 bounded LRU cache，适合本地开发和单实例优化；多实例部署时，可再引入 Redis、TTL、metadata version 和缓存失效策略。
+
+4. **复杂时间表达与 Top / 最值查询仍需增强**
+   - 例如“最近三个月”“上周同期”“环比”“同比”“销售额最高的品类”等语义，需要更稳定的日期解析、排序口径和边界 case 覆盖。
+
+5. **SQL 语义正确性仍依赖 eval 覆盖**
    - Parser 能保证只读和基础语法安全，但无法完全证明业务语义正确。后续应增加结果列、行数、数值范围和黄金 SQL 对比。
 
-4. **召回质量需要持续评估**
-   - 可以在 eval 中增加字段召回命中率、指标召回命中率、字段值召回命中率等中间指标。
+6. **权限、审计与大结果集治理需要产品化**
+   - 真实生产环境还需要用户级权限、字段级脱敏、行级权限、审计日志，以及大结果集 LIMIT / 分页策略。
 
-5. **多轮对话能力有限**
-   - 当前更偏单轮问数。后续可支持基于上一轮 SQL、结果和上下文继续追问。
+7. **Trace 脱敏、保留周期和可视化仍需完善**
+   - 当前 Trace 主要落 JSON 文件，后续可以增加脱敏规则、保留周期配置和可视化页面，方便非开发人员查看每一步召回和生成过程。
 
-6. **权限与数据安全需要产品化治理**
-   - 目前已有输入侧 guardrail 和 SQL Parser，但真实生产环境还需要用户级权限、字段级脱敏、行级权限和审计日志。
+8. **更高级的 Agent 能力仍可继续迭代**
+   - Redis 分布式缓存、MySQL 索引优化、Rerank、Memory、多轮追问和外部服务标准化部署仍是后续方向，但不应混同为当前阶段已经完成的能力。
 
-7. **Trace 展示仍偏工程侧**
-   - 当前 Trace 主要落 JSON 文件，后续可以提供可视化 Trace 页面，方便非开发人员查看每一步召回和生成过程。
-
-8. **外部服务部署仍需标准化**
-   - MySQL、Qdrant、Elasticsearch、Embedding、LLM 目前依赖本地配置，后续可补充 Docker Compose 或部署文档。
-
-## 9. 相关文件
+## 10. 相关文件
 
 | 文件 | 说明 |
 |---|---|
