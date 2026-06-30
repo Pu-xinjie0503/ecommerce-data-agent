@@ -35,6 +35,7 @@ from app.agent.nodes.extract_keywords import extract_keywords
 from app.agent.nodes.filter_metric import filter_metric
 from app.agent.nodes.filter_table import filter_table
 from app.agent.nodes.generate_sql import generate_sql
+from app.agent.nodes.govern_sql import govern_sql
 from app.agent.nodes.guard_query import guard_query
 from app.agent.nodes.keyword_expansion_cache import trace_keyword_cache_stats
 from app.agent.nodes.merge_retrieved_info import merge_retrieved_info
@@ -151,6 +152,7 @@ graph_builder.add_node("filter_metric", trace_node("filter_metric", filter_metri
 graph_builder.add_node("filter_table", trace_node("filter_table", filter_table))
 graph_builder.add_node("add_extra_context", trace_node("add_extra_context", add_extra_context))
 graph_builder.add_node("generate_sql", trace_node("generate_sql", generate_sql))
+graph_builder.add_node("govern_sql", trace_node("govern_sql", govern_sql))
 graph_builder.add_node("validate_sql", trace_node("validate_sql", validate_sql))
 graph_builder.add_node("correct_sql", trace_node("correct_sql", correct_sql))
 graph_builder.add_node("run_sql", trace_node("run_sql", run_sql))
@@ -221,6 +223,17 @@ graph_builder.add_conditional_edges(
 # 生成 SQL 后：成功进入校验，LLM/解析等失败直接结束，避免下游覆盖原始错误类型
 graph_builder.add_conditional_edges(
     source="generate_sql",
+    path=lambda state: END if state.get("error_type") else "govern_sql",
+    path_map={
+        END: END,
+        "govern_sql": "govern_sql",
+    },
+)
+
+
+# SQL 执行前治理：只读安全、权限注入和 LIMIT 兜底通过后，再进入数据库 EXPLAIN 校验
+graph_builder.add_conditional_edges(
+    source="govern_sql",
     path=lambda state: END if state.get("error_type") else "validate_sql",
     path_map={
         END: END,
@@ -253,10 +266,10 @@ graph_builder.add_conditional_edges(
 # 修正 SQL 后：成功再执行；修正失败直接结束
 graph_builder.add_conditional_edges(
     source="correct_sql",
-    path=lambda state: END if state.get("error_type") else "run_sql",
+    path=lambda state: END if state.get("error_type") else "govern_sql",
     path_map={
         END: END,
-        "run_sql": "run_sql",
+        "govern_sql": "govern_sql",
     },
 )
 

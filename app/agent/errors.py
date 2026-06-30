@@ -13,6 +13,8 @@ class AgentErrorType(str, Enum):
     TABLE_FILTER_EMPTY = "table_filter_empty"
     METRIC_FILTER_EMPTY = "metric_filter_empty"
     SQL_GENERATION_FAILED = "sql_generation_failed"
+    SQL_POLICY_VIOLATION = "sql_policy_violation"
+    PERMISSION_DENIED = "permission_denied"
     SQL_PARSE_FAILED = "sql_parse_failed"
     SQL_VALIDATION_FAILED = "sql_validation_failed"
     SQL_CORRECTION_FAILED = "sql_correction_failed"

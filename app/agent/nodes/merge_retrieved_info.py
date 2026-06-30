@@ -61,6 +61,15 @@ async def merge_retrieved_info(
         retrieved_column_infos: list[ColumnInfo] = state["retrieved_column_infos"]
         retrieved_metric_infos: list[MetricInfo] = state["retrieved_metric_infos"]
         retrieved_value_infos: list[ValueInfo] = state["retrieved_value_infos"]
+        dependency_warnings = [
+            warning
+            for warning in (
+                state.get("recall_column_warning"),
+                state.get("recall_metric_warning"),
+                state.get("recall_value_warning"),
+            )
+            if warning
+        ]
 
         meta_mysql_repository = runtime.context["meta_mysql_repository"]
 
@@ -190,6 +199,7 @@ async def merge_retrieved_info(
         return {
             "table_infos": table_infos,
             "metric_infos": metric_infos,
+            "dependency_warnings": dependency_warnings,
         }
     except ExternalServiceError as e:
         logger.error(f"{step} external service failed: {e}")

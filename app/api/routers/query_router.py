@@ -25,6 +25,9 @@ async def query_handler(
     """接收用户自然语言问题，并流式返回 LangGraph 工作流输出"""
 
     return StreamingResponse(
-        query_service.query(query.query),
+        query_service.query(
+            query.query,
+            permission_context=query.to_permission_context(),
+        ),
         media_type="text/event-stream",
     )

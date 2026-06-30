@@ -83,10 +83,11 @@ flowchart TD
     Extra -->|grounding 失败| EndGrounding([结束：返回可恢复错误])
     Extra -->|上下文完整| Generate[generate_sql\n生成 SQL]
 
-    Generate --> Validate[validate_sql\nSQL Parser + 数据库校验]
+    Generate --> Govern[govern_sql\nSQL 安全 / 权限注入 / LIMIT 治理]
+    Govern --> Validate[validate_sql\nSQL Parser + EXPLAIN 校验]
     Validate -->|通过| Run[run_sql\n执行 SQL]
     Validate -->|失败| Correct[correct_sql\n修正 SQL]
-    Correct --> Run
+    Correct --> Govern
     Run --> End([返回 SQL / Result / Trace])
 ```
 
@@ -95,7 +96,7 @@ flowchart TD
 - **先拦截再生成**：不安全请求、敏感信息请求、破坏性 SQL 请求会在 `guard_query` 阶段结束。
 - **先澄清再执行**：指标、时间范围或分析目标过于模糊时，会返回澄清问题，不盲目生成 SQL。
 - **三路召回并行**：字段、字段值、指标分别召回，再统一合并为 SQL 生成上下文。
-- **SQL 执行前强校验**：LLM 输出先经过 SQL Parser 清洗和安全检查，再交给 DW MySQL 校验。
+- **SQL 执行前强治理**：LLM 输出先经过 `govern_sql` 做只读安全、敏感字段拦截、权限注入和 LIMIT 兜底，再由 `validate_sql` 完成 Parser 清洗、DW MySQL EXPLAIN 校验和风险分析。
 - **全链路 Trace**：每个节点都会记录输入摘要、输出摘要、错误类型、耗时和建议动作。
 
 ## 4. 核心问题与解决方案
@@ -114,7 +115,7 @@ LLM 可能返回 Markdown 代码块、多条 SQL、解释性文本、危险 SQL 
 - 禁止多语句分号。
 - 只允许只读查询进入后续校验与执行。
 
-SQL 生成后会先进入 `validate_sql` 节点：Parser 清洗通过后，再调用 DW MySQL 做真实语法校验；失败时进入 `correct_sql` 尝试修正。
+SQL 生成后会先进入 `govern_sql` 节点做执行前治理，再进入 `validate_sql` 节点：Parser 清洗通过后，调用 DW MySQL 做真实语法校验和 EXPLAIN 风险分析；失败时进入 `correct_sql` 尝试修正，修正后的 SQL 会重新回到 `govern_sql`。
 
 ### 4.2 字段值幻觉 → exact-first grounding
 
@@ -192,6 +193,39 @@ Agent 调整 Prompt、召回策略、SQL 校验或字段值 grounding 后，容�
 
 评估逻辑会检查是否生成 SQL、是否命中必须 SQL 片段、是否出现禁用 SQL 片段、是否按预期拦截、是否按预期澄清，以及 Trace 中是否出现关键节点。
 
+### 4.6 SQL 执行前治理与权限隔离
+
+为了让项目不只停留在“本地能跑通”的 NL2SQL 原型，SQL 生成后新增了 `govern_sql` 节点，位于 `generate_sql` / `correct_sql` 之后、`validate_sql` 之前：
+
+- `app/agent/nodes/govern_sql.py` 负责统一执行 SQL 治理策略。
+- `app/security/sql_policy.py` 负责只读查询检查、危险关键字拦截、敏感字段拦截和默认 `LIMIT 500` 兜底。
+- `app/security/permission_policy.py` 负责根据请求级 `PermissionContext` 注入行级权限条件。
+- 默认角色为 `admin`，兼容原有前端和 eval 请求，不会破坏既有调用链路。
+- 非管理员可以通过 `allowed_region_ids` 或 `allowed_region_names` 限制可查询地区，系统会把权限条件注入到 SQL 中，而不是依赖前端自觉传过滤条件。
+
+这部分的重点不是实现完整企业 IAM，而是在项目里体现数据权限隔离的工程意识：SQL 必须经过后端统一治理，不能直接把模型输出交给数据库执行。
+
+### 4.7 EXPLAIN 风险分析与索引建议
+
+`validate_sql` 节点在数据库校验阶段接入了 `app/observability/sql_risk_analyzer.py`，对 DW MySQL 的 EXPLAIN 结果做轻量风险分析：
+
+- 将 `type/key/rows/Extra` 等执行计划信息写入 Trace。
+- 标记 `FULL_TABLE_SCAN`、`NO_INDEX_USED`、`USING_TEMPORARY`、`USING_FILESORT` 等风险。
+- 在最终响应中返回 `risk_flags`、`index_suggestions` 和 `sql_rewrite_suggestions`。
+- 索引建议以观测为依据，不盲目承诺“加索引就能优化”，而是结合慢查询、EXPLAIN、过滤字段、JOIN 字段和排序分组字段再判断。
+
+因此面试中被问到数据库索引优化时，可以说明：当前性能瓶颈不在 SQL 执行，但项目已经具备发现索引风险和输出优化建议的入口。
+
+### 4.8 异常熔断与降级兜底
+
+召回链路依赖 LLM、Embedding、Qdrant 和 Elasticsearch，任何一个外部服务异常都可能导致问数失败。项目新增了轻量级进程内熔断和弱依赖降级：
+
+- `app/resilience/circuit_breaker.py` 提供简单的失败计数、打开、半开和恢复机制。
+- `app/resilience/fallback.py` 提供弱依赖失败时的统一降级结果。
+- LLM 关键词扩展失败时，使用原始关键词继续召回。
+- Embedding / Qdrant / Elasticsearch 异常时，跳过对应召回分支并返回 `dependency_warnings`，尽量让其他召回分支继续完成。
+- 这不是分布式熔断平台，但已经体现了生产链路中“弱依赖可降级、核心链路不中断”的设计。
+
 ## 5. 快速启动命令
 
 ### 5.1 环境准备
@@ -240,6 +274,17 @@ Accept: text/event-stream
 curl -N -X POST "http://127.0.0.1:8000/api/query" \
   -H "Content-Type: application/json" \
   -d '{"query":"华北地区的总销售额"}'
+```
+
+带权限上下文的请求示例：
+
+```json
+{
+  "query": "统计华北地区的销售额",
+  "user_id": "u001",
+  "role": "region_operator",
+  "allowed_region_names": ["华北"]
+}
 ```
 
 ### 5.3 启动前端
@@ -319,10 +364,16 @@ uv run python -m app.scripts.build_meta_knowledge
 
 ### 单元测试
 
-SQL Parser 单元测试入口：
+完整单元测试入口：
 
 ```bash
-uv run pytest tests/test_sql_parser.py
+uv run pytest tests
+```
+
+最近一次本地结果：
+
+```text
+21 passed
 ```
 
 
@@ -341,12 +392,25 @@ eval/reports/latest.md
 eval/reports/latest.json
 ```
 
+最近一次完整 eval 结果：
+
+```text
+total: 28
+passed: 23
+failed: 5
+pass_rate: 82.14%
+```
+
 
 ## 8. 后端性能与 Agent 工程化增强
 
 面试后，项目进一步补充了后端性能观测与稳定性治理能力，重点不再只是提升 NL2SQL case 通过率，而是让 Agent 查询链路更可排查、可压测、可兜底。
 
 - **SQL EXPLAIN Trace**：在 SQL 校验阶段采集 EXPLAIN 执行计划，将 `type/key/rows/Extra` 以及 `FULL_TABLE_SCAN`、`NO_INDEX_USED`、`USING_TEMPORARY`、`USING_FILESORT` 等风险标记写入 Trace 和性能报告，用于定位潜在 SQL 执行风险。
+- **SQL 执行前治理**：新增 `govern_sql` 节点，在数据库校验和执行前统一处理只读安全、敏感字段、权限条件和 LIMIT 兜底。
+- **权限隔离**：新增请求级 `PermissionContext`，支持按地区 ID / 名称注入行级权限条件；默认 admin 兼容原有本地演示和 eval。
+- **索引优化建议**：基于 EXPLAIN 风险输出 `risk_flags`、`index_suggestions` 和 `sql_rewrite_suggestions`，用于说明后续如何根据真实慢查询和访问模式做索引设计。
+- **轻量熔断降级**：为 LLM 关键词扩展、Embedding、Qdrant、Elasticsearch 等弱依赖增加进程内 CircuitBreaker 和 fallback，异常时通过 `dependency_warnings` 暴露降级信息。
 - **性能 baseline**：基于 55 条 eval case 统计端到端耗时、节点耗时和 P50/P90/P95，确认当前主要耗时集中在 LLM SQL 生成与召回链路，而不是 MySQL 查询执行。
 - **召回链路缓存**：实现进程内 bounded LRU cache，包括 Embedding Cache 和 Keyword Expansion Cache，减少重复 TEI / LLM 调用；该缓存用于优化 Agent 召回链路，不是 Redis，也不是 SQL 查询结果缓存。
 - **边界治理增强**：补充中文写库意图拦截，如“更新表”“把字段改成”等；对“看一下各品牌情况”这类缺少明确指标的问题触发澄清，避免模型强行生成 SQL。
@@ -373,14 +437,14 @@ eval/reports/latest.json
 5. **SQL 语义正确性仍依赖 eval 覆盖**
    - Parser 能保证只读和基础语法安全，但无法完全证明业务语义正确。后续应增加结果列、行数、数值范围和黄金 SQL 对比。
 
-6. **权限、审计与大结果集治理需要产品化**
-   - 真实生产环境还需要用户级权限、字段级脱敏、行级权限、审计日志，以及大结果集 LIMIT / 分页策略。
+6. **权限、审计与大结果集治理仍需要产品化**
+   - 当前已经有样例级地区行级权限和默认 LIMIT 兜底；真实生产环境仍需要完整 IAM / 租户隔离、字段级脱敏、审计日志、分页、异步导出和权限变更追踪。
 
 7. **Trace 脱敏、保留周期和可视化仍需完善**
    - 当前 Trace 主要落 JSON 文件，后续可以增加脱敏规则、保留周期配置和可视化页面，方便非开发人员查看每一步召回和生成过程。
 
 8. **更高级的 Agent 能力仍可继续迭代**
-   - Redis 分布式缓存、MySQL 索引优化、Rerank、Memory、多轮追问和外部服务标准化部署仍是后续方向，但不应混同为当前阶段已经完成的能力。
+   - Redis 分布式缓存、生产级分布式熔断、MySQL 索引优化、Rerank、Memory、多轮追问和外部服务标准化部署仍是后续方向，但不应混同为当前阶段已经完成的能力。
 
 ## 10. 相关文件
 
@@ -391,8 +455,14 @@ eval/reports/latest.json
 | `app/services/query_service.py` | 查询服务，负责调用 LangGraph 并返回最终响应。 |
 | `app/agent/graph.py` | LangGraph 工作流编排。 |
 | `app/agent/nodes/` | Agent 各节点实现。 |
+| `app/agent/nodes/govern_sql.py` | SQL 执行前治理节点。 |
+| `app/security/sql_policy.py` | SQL 只读安全、敏感字段和 LIMIT 策略。 |
+| `app/security/permission_policy.py` | 请求级权限上下文与行级权限注入。 |
 | `app/utils/sql_parser.py` | SQL 清洗、安全检查与提取。 |
+| `app/observability/sql_risk_analyzer.py` | EXPLAIN 风险分析、索引建议和 SQL 改写建议。 |
 | `app/observability/trace_manager.py` | 结构化 Trace 管理。 |
+| `app/resilience/circuit_breaker.py` | 轻量级进程内熔断器。 |
+| `app/resilience/fallback.py` | 弱依赖异常降级结果封装。 |
 | `eval/cases.yaml` | 自动化评估测试集。 |
 | `eval/run_eval.py` | eval 执行入口。 |
 | `eval/reports/latest.md` | 最新 Markdown 评估报告。 |

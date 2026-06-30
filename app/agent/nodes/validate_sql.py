@@ -5,6 +5,7 @@ from app.agent.errors import AgentErrorType, build_error_state, clear_error_stat
 from app.agent.exceptions import ExternalServiceError
 from app.agent.state import DataAgentState
 from app.core.log import logger
+from app.observability.sql_risk_analyzer import analyze_sql_risk
 from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
 from app.utils.sql_parser import extract_sql
 
@@ -24,7 +25,7 @@ async def validate_sql(
         try:
             sql = extract_sql(state["sql"])
             explain_rows = await dw_mysql_repository.validate(sql)
-            risk_flags = dw_mysql_repository.build_explain_risk_flags(explain_rows)
+            risk_analysis = analyze_sql_risk(sql, explain_rows)
 
             logger.info("SQL语法正确")
             writer({"type": "progress", "step": step, "status": "success"})
@@ -33,7 +34,9 @@ async def validate_sql(
                 "sql": sql,
                 "error": None,
                 "sql_explain": explain_rows,
-                "risk_flags": risk_flags,
+                "risk_flags": risk_analysis.risk_flags,
+                "index_suggestions": risk_analysis.index_suggestions,
+                "sql_rewrite_suggestions": risk_analysis.rewrite_suggestions,
                 **clear_error_state(success=True),
             }
 
