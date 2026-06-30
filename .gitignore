@@ -34,6 +34,7 @@ docker/tei-data/
 tei-data/
 
 # Cache
+.codegraph/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

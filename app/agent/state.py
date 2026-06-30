@@ -112,12 +112,19 @@ class DataAgentState(TypedDict, total=False):
     # 结构化非阻断告警
     warning_type: str | None
     warning_message: str | None
+    recall_column_warning: str
+    recall_metric_warning: str
+    recall_value_warning: str
+    dependency_warnings: list[str]
     missing_values: list[str]
     matched_values: list[str]
 
     # SQL 执行计划观测
     sql_explain: list[dict]
     risk_flags: list[str]
+    index_suggestions: list[str]
+    sql_rewrite_suggestions: list[str]
+    governance_warnings: list[str]
 
     #结果
     result: list[dict]

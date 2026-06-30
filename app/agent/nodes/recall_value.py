@@ -15,6 +15,8 @@ from app.agent.nodes.keyword_expansion_cache import expand_keywords_with_cache
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.entities.value_info import ValueInfo
+from app.resilience.circuit_breaker import CircuitBreakerOpen, call_with_circuit_breaker
+from app.resilience.fallback import build_recall_fallback
 
 
 def normalize_value_candidates(texts: list[str]) -> list[str]:
@@ -200,25 +202,18 @@ async def recall_value(
         value_es_repository = runtime.context["value_es_repository"]
 
         try:
-            extended_keywords = await expand_keywords_with_cache(
-                recall_type="value",
-                prompt_name="extend_keywords_for_value_recall",
-                query=query,
-                keywords=keywords,
-            )
-        except ExternalServiceError as e:
-            logger.error(f"{step} LLM keyword expansion failed: {e}")
-            writer({"type": "progress", "step": step, "status": "error"})
-            return {
-                "retrieved_value_infos": [],
-                **build_error_state(
-                    error_type=e.error_type,
-                    error_message=str(e),
-                    error_node="recall_value",
-                    recoverable=True,
-                    suggested_action="请稍后重试，或检查 LLM 服务状态、限流和超时配置。",
+            extended_keywords = await call_with_circuit_breaker(
+                "llm_keyword_value",
+                lambda: expand_keywords_with_cache(
+                    recall_type="value",
+                    prompt_name="extend_keywords_for_value_recall",
+                    query=query,
+                    keywords=keywords,
                 ),
-            }
+            )
+        except (ExternalServiceError, CircuitBreakerOpen) as e:
+            logger.warning(f"{step} LLM keyword expansion degraded: {e}")
+            extended_keywords = []
 
         value_candidates = normalize_value_candidates([query] + keywords + extended_keywords)
         logger.info(f"字段取值候选词: {value_candidates}")
@@ -230,21 +225,20 @@ async def recall_value(
             logger.info(f"字段取值 grounding 目标: {domain_filter_values}")
 
         try:
-            exact_value_infos = await value_es_repository.search_exact_values(value_candidates)
+            exact_value_infos = await call_with_circuit_breaker(
+                "elasticsearch_value",
+                lambda: value_es_repository.search_exact_values(value_candidates),
+            )
         except Exception as e:
-            error_type = classify_es_exception(e)
+            classify_es_exception(e)
             logger.error(f"{step} es exact search failed: {e}")
-            writer({"type": "progress", "step": step, "status": "error"})
-            return {
-                "retrieved_value_infos": [],
-                **build_error_state(
-                    error_type=error_type,
-                    error_message=str(e),
-                    error_node="recall_value",
-                    recoverable=True,
-                    suggested_action="请稍后重试，或检查 Elasticsearch 服务状态与超时配置。",
-                ),
-            }
+            writer({"type": "progress", "step": step, "status": "success"})
+            return build_recall_fallback(
+                result_key="retrieved_value_infos",
+                warning_key="recall_value_warning",
+                dependency_name="Elasticsearch 字段值召回",
+                reason=str(e),
+            )
 
         if exact_value_infos:
             retrieved_value_infos = dedupe_value_infos(exact_value_infos)
@@ -255,21 +249,22 @@ async def recall_value(
 
             for keyword in value_candidates:
                 try:
-                    fuzzy_value_infos.extend(await value_es_repository.search(keyword))
+                    fuzzy_value_infos.extend(
+                        await call_with_circuit_breaker(
+                            "elasticsearch_value",
+                            lambda: value_es_repository.search(keyword),
+                        )
+                    )
                 except Exception as e:
-                    error_type = classify_es_exception(e)
+                    classify_es_exception(e)
                     logger.error(f"{step} es fuzzy search failed: {e}")
-                    writer({"type": "progress", "step": step, "status": "error"})
-                    return {
-                        "retrieved_value_infos": [],
-                        **build_error_state(
-                            error_type=error_type,
-                            error_message=str(e),
-                            error_node="recall_value",
-                            recoverable=True,
-                            suggested_action="请稍后重试，或检查 Elasticsearch 服务状态与超时配置。",
-                        ),
-                    }
+                    writer({"type": "progress", "step": step, "status": "success"})
+                    return build_recall_fallback(
+                        result_key="retrieved_value_infos",
+                        warning_key="recall_value_warning",
+                        dependency_name="Elasticsearch 字段值召回",
+                        reason=str(e),
+                    )
 
             retrieved_value_infos = dedupe_value_infos(fuzzy_value_infos)
 

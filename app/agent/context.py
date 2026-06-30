@@ -9,6 +9,7 @@ from typing import TypedDict
 
 from app.clients.embedding_client_manager import EmbeddingClientManager
 from app.observability.trace_manager import TraceManager
+from app.security.permission_policy import PermissionContext
 
 from app.repositories.es.value_es_repository import ValueESRepository
 from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
@@ -43,3 +44,6 @@ class DataAgentContext(TypedDict, total=False):
 
     # 结构化 Trace 管理器
     trace_manager: TraceManager
+
+    # 请求级权限上下文，用于 SQL 执行前行级权限注入
+    permission_context: PermissionContext

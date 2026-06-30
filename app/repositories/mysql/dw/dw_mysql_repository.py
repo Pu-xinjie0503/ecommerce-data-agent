@@ -76,7 +76,7 @@ class DWMySQLRepository:
             if not used_key:
                 flags.add("NO_INDEX_USED")
 
-            if isinstance(rows, int | float) and rows >= large_rows_threshold:
+            if isinstance(rows, (int, float)) and rows >= large_rows_threshold:
                 flags.add("LARGE_ROWS_SCAN")
 
             if "Using temporary" in extra:

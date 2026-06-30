@@ -7,7 +7,6 @@
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
-from app.agent.errors import build_error_state
 from app.agent.exceptions import (
     ExternalServiceError,
     classify_embedding_exception,
@@ -17,6 +16,8 @@ from app.agent.nodes.keyword_expansion_cache import expand_keywords_with_cache
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.entities.column_info import ColumnInfo
+from app.resilience.circuit_breaker import CircuitBreakerOpen, call_with_circuit_breaker
+from app.resilience.fallback import build_recall_fallback
 
 
 async def recall_column(
@@ -37,25 +38,18 @@ async def recall_column(
         embedding_client = runtime.context["embedding_client"]
 
         try:
-            extended_keywords = await expand_keywords_with_cache(
-                recall_type="column",
-                prompt_name="extend_keywords_for_column_recall",
-                query=query,
-                keywords=keywords,
-            )
-        except ExternalServiceError as e:
-            logger.error(f"{step} LLM keyword expansion failed: {e}")
-            writer({"type": "progress", "step": step, "status": "error"})
-            return {
-                "retrieved_column_infos": [],
-                **build_error_state(
-                    error_type=e.error_type,
-                    error_message=str(e),
-                    error_node="recall_column",
-                    recoverable=True,
-                    suggested_action="请稍后重试，或检查 LLM 服务状态、限流和超时配置。",
+            extended_keywords = await call_with_circuit_breaker(
+                "llm_keyword_column",
+                lambda: expand_keywords_with_cache(
+                    recall_type="column",
+                    prompt_name="extend_keywords_for_column_recall",
+                    query=query,
+                    keywords=keywords,
                 ),
-            }
+            )
+        except (ExternalServiceError, CircuitBreakerOpen) as e:
+            logger.warning(f"{step} LLM keyword expansion degraded: {e}")
+            extended_keywords = []
 
         keywords = set(keywords + extended_keywords)
 
@@ -63,40 +57,36 @@ async def recall_column(
 
         for keyword in keywords:
             try:
-                embedding = await embedding_client.aembed_query(keyword)
-            except Exception as e:
-                error_type = classify_embedding_exception(e)
-                logger.error(f"{step} embedding failed: {e}")
-                writer({"type": "progress", "step": step, "status": "error"})
-                return {
-                    "retrieved_column_infos": [],
-                    **build_error_state(
-                        error_type=error_type,
-                        error_message=str(e),
-                        error_node="recall_column",
-                        recoverable=True,
-                        suggested_action="请稍后重试，或检查 Embedding 服务状态与超时配置。",
-                    ),
-                }
-
-            try:
-                current_column_infos: list[ColumnInfo] = await column_qdrant_repository.search(
-                    embedding
+                embedding = await call_with_circuit_breaker(
+                    "embedding",
+                    lambda: embedding_client.aembed_query(keyword),
                 )
             except Exception as e:
-                error_type = classify_qdrant_exception(e)
+                classify_embedding_exception(e)
+                logger.error(f"{step} embedding failed: {e}")
+                writer({"type": "progress", "step": step, "status": "success"})
+                return build_recall_fallback(
+                    result_key="retrieved_column_infos",
+                    warning_key="recall_column_warning",
+                    dependency_name="Embedding",
+                    reason=str(e),
+                )
+
+            try:
+                current_column_infos: list[ColumnInfo] = await call_with_circuit_breaker(
+                    "qdrant_column",
+                    lambda: column_qdrant_repository.search(embedding),
+                )
+            except Exception as e:
+                classify_qdrant_exception(e)
                 logger.error(f"{step} qdrant failed: {e}")
-                writer({"type": "progress", "step": step, "status": "error"})
-                return {
-                    "retrieved_column_infos": [],
-                    **build_error_state(
-                        error_type=error_type,
-                        error_message=str(e),
-                        error_node="recall_column",
-                        recoverable=True,
-                        suggested_action="请稍后重试，或检查 Qdrant 服务状态与超时配置。",
-                    ),
-                }
+                writer({"type": "progress", "step": step, "status": "success"})
+                return build_recall_fallback(
+                    result_key="retrieved_column_infos",
+                    warning_key="recall_column_warning",
+                    dependency_name="Qdrant 字段召回",
+                    reason=str(e),
+                )
 
             for column_info in current_column_infos:
                 if column_info.id not in column_info_map:

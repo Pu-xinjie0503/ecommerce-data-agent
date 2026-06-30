@@ -8,6 +8,7 @@
 import asyncio
 import json
 import uuid
+from typing import Optional
 
 from app.clients.embedding_client_manager import EmbeddingClientManager
 
@@ -22,6 +23,7 @@ from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
 from app.repositories.mysql.meta.meta_mysql_repository import MetaMySQLRepository
 from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantRepository
 from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
+from app.security.permission_policy import PermissionContext
 
 
 class QueryService:
@@ -44,13 +46,18 @@ class QueryService:
         self.metric_qdrant_repository = metric_qdrant_repository
         self.value_es_repository = value_es_repository
 
-    async def query(self, query: str):
+    async def query(
+        self,
+        query: str,
+        permission_context: Optional[PermissionContext] = None,
+    ):
         """执行一次问数工作流，并逐段产出 SSE 消息"""
 
         request_id = uuid.uuid4().hex
         request_id_token = request_id_ctx_var.set(request_id)
         trace_manager = TraceManager(request_id=request_id, query=query)
         state = DataAgentState(query=query)
+        permission_context = permission_context or PermissionContext()
 
         context = DataAgentContext(
             column_qdrant_repository=self.column_qdrant_repository,
@@ -61,6 +68,7 @@ class QueryService:
             dw_mysql_repository=self.dw_mysql_repository,
             request_id=request_id,
             trace_manager=trace_manager,
+            permission_context=permission_context,
         )
 
         try:
@@ -145,9 +153,15 @@ def build_final_response(request_id: str, state: dict, trace_path: str) -> dict:
         "error_message": state.get("error_message"),
         "recoverable": state.get("recoverable", False),
         "suggested_action": state.get("suggested_action"),
-        "warning_type": state.get("warning_type"),
-        "warning_message": state.get("warning_message"),
-        "missing_values": state.get("missing_values"),
-        "matched_values": state.get("matched_values"),
-        "trace_path": trace_path,
+            "warning_type": state.get("warning_type"),
+            "warning_message": state.get("warning_message"),
+            "dependency_warnings": state.get("dependency_warnings", []),
+            "governance_warnings": state.get("governance_warnings", []),
+            "sql_explain": state.get("sql_explain", []),
+            "risk_flags": state.get("risk_flags", []),
+            "index_suggestions": state.get("index_suggestions", []),
+            "sql_rewrite_suggestions": state.get("sql_rewrite_suggestions", []),
+            "missing_values": state.get("missing_values"),
+            "matched_values": state.get("matched_values"),
+            "trace_path": trace_path,
     }
