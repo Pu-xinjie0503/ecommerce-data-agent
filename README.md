@@ -178,11 +178,12 @@ API 最终响应中也会返回 `trace_path`，便于从一次线上请求直接
 
 Agent 调整 Prompt、召回策略、SQL 校验或字段值 grounding 后，容易修好一个 case 又破坏另一个 case。
 
-项目提供了轻量级 eval 框架：
+项目提供结果等价 eval 框架：
 
-- 测试集：`eval/cases.yaml`
-- 执行入口：`eval/run_eval.py`
-- 最新报告：`eval/reports/latest.md` 和 `eval/reports/latest.json`
+- 开发集：`eval/cases_dev.yaml`，30 个意图、90 条表达。
+- 隔离测试集：`eval/cases_test.yaml`，10 个意图、30 条表达。
+- 执行入口：`eval/run_eval.py` 与 `eval/run_benchmarks.py`。
+- 运行产物：`eval/reports/<run_id>/` 与 `traces/eval/<run_id>/`。
 
 当前测试集覆盖：
 
@@ -191,7 +192,7 @@ Agent 调整 Prompt、召回策略、SQL 校验或字段值 grounding 后，容�
 - 澄清问题：指标不清、时间范围不清、宽泛分析请求。
 - 字段值 grounding：不存在字段值、部分字段值不存在 warning。
 
-评估逻辑会检查是否生成 SQL、是否命中必须 SQL 片段、是否出现禁用 SQL 片段、是否按预期拦截、是否按预期澄清，以及 Trace 中是否出现关键节点。
+普通问数会在同一 DW 会话中执行 Agent SQL 与 Gold SQL，并比较结果等价性；安全拦截、Grounding 和澄清按确定性分支断言。报告额外记录 Execution Accuracy、意图宏平均、分类指标和 P50/P90/P95。
 
 ### 4.6 SQL 执行前治理与权限隔离
 
@@ -358,9 +359,7 @@ uv run python -m app.scripts.build_meta_knowledge
 
 <img src="docs/images/query-flow-result4.png" alt="字段值 grounding 失败截图" width="750"> ```
 
-## 7. 自动化测试 / eval 结果
-
-
+## 7. 自动化测试 / eval 证据
 
 ### 单元测试
 
@@ -370,37 +369,30 @@ uv run python -m app.scripts.build_meta_knowledge
 uv run pytest tests
 ```
 
-最近一次本地结果：
-
-```text
-21 passed
-```
-
-
 ### Agent Eval
 
-运行完整问数 Agent 回归评估：
+项目提供 30 个开发意图/90 条表达和 10 个隔离测试意图/30 条表达。普通问数以 Agent SQL 与 Gold SQL 的执行结果等价性为主要判定，另按意图计算宏平均，避免近义改写抬高准确率。
+
+运行隔离测试集：
 
 ```bash
-uv run python -m eval.run_eval
+uv run python -m eval.run_eval --cases eval/cases_test.yaml --strict --cache-mode cold --run-id evidence-test-cold
 ```
 
-最近一次本地报告可参考：
+运行关闭/冷/暖缓存消融、Trace 分析和 10 并发 50 请求 API 压测：
+
+```bash
+uv run python -m eval.run_benchmarks --suite-id evidence-v1 --concurrency 10 --requests 50 --warmup-requests 5
+```
+
+报告按运行 ID 写入：
 
 ```text
-eval/reports/latest.md
-eval/reports/latest.json
+eval/reports/<run_id>/
+traces/eval/<run_id>/
 ```
 
-最近一次完整 eval 结果：
-
-```text
-total: 28
-passed: 23
-failed: 5
-pass_rate: 82.14%
-```
-
+在真实运行完成前，README 不预填准确率、延迟提升或缓存命中率。完整运行顺序、指标口径和简历引用规则见 `eval/README.md`。
 
 ## 8. 后端性能与 Agent 工程化增强
 
@@ -411,10 +403,10 @@ pass_rate: 82.14%
 - **权限隔离**：新增请求级 `PermissionContext`，支持按地区 ID / 名称注入行级权限条件；默认 admin 兼容原有本地演示和 eval。
 - **索引优化建议**：基于 EXPLAIN 风险输出 `risk_flags`、`index_suggestions` 和 `sql_rewrite_suggestions`，用于说明后续如何根据真实慢查询和访问模式做索引设计。
 - **轻量熔断降级**：为 LLM 关键词扩展、Embedding、Qdrant、Elasticsearch 等弱依赖增加进程内 CircuitBreaker 和 fallback，异常时通过 `dependency_warnings` 暴露降级信息。
-- **性能 baseline**：基于 55 条 eval case 统计端到端耗时、节点耗时和 P50/P90/P95，确认当前主要耗时集中在 LLM SQL 生成与召回链路，而不是 MySQL 查询执行。
-- **召回链路缓存**：实现进程内 bounded LRU cache，包括 Embedding Cache 和 Keyword Expansion Cache，减少重复 TEI / LLM 调用；该缓存用于优化 Agent 召回链路，不是 Redis，也不是 SQL 查询结果缓存。
+- **性能证据**：Trace 根节点记录串行召回估算、并行墙钟、估算节省毫秒与比例，离线报告同时输出端到端和节点级 P50/P90/P95；只有真实运行后才填写结论数字。
+- **召回链路缓存**：实现进程内有界 LRU Cache，包括 Embedding Cache 和 Keyword Expansion Cache，并记录 hit/miss/bypass 与请求级增量；缓存消融严格区分 disabled、cold、warm。
 - **边界治理增强**：补充中文写库意图拦截，如“更新表”“把字段改成”等；对“看一下各品牌情况”这类缺少明确指标的问题触发澄清，避免模型强行生成 SQL。
-- **API benchmark**：新增 `/api/query` 压测脚本，支持并发请求、P50/P90/P95/P99、technical error rate、业务分支分布等统计。
+- **API benchmark**：新增固定 Case 的 `/api/query` 压测脚本，支持预热排除、吞吐量、P50/P90/P95/P99、technical error rate、业务分支分布和逐请求原始记录。
 - **外部依赖兜底**：为 LLM、Embedding、Qdrant、Elasticsearch、MySQL 调用增加 timeout，并为 LLM 调用增加并发限制，避免高并发时打爆模型服务。
 - **错误类型细分**：区分 `llm_timeout`、`embedding_timeout`、`mysql_timeout`、`llm_busy` 等系统错误，以及 `unsafe_query`、`value_grounding_failed`、`need_clarification` 等预期业务分支。
 
@@ -435,7 +427,7 @@ pass_rate: 82.14%
    - 例如“最近三个月”“上周同期”“环比”“同比”“销售额最高的品类”等语义，需要更稳定的日期解析、排序口径和边界 case 覆盖。
 
 5. **SQL 语义正确性仍依赖 eval 覆盖**
-   - Parser 能保证只读和基础语法安全，但无法完全证明业务语义正确。后续应增加结果列、行数、数值范围和黄金 SQL 对比。
+   - 当前已通过 Gold SQL 执行结果等价评估语义正确性，但 40 个意图仍不能代表生产流量；后续应按真实失败样本扩充类别和边界 Case。
 
 6. **权限、审计与大结果集治理仍需要产品化**
    - 当前已经有样例级地区行级权限和默认 LIMIT 兜底；真实生产环境仍需要完整 IAM / 租户隔离、字段级脱敏、审计日志、分页、异步导出和权限变更追踪。
@@ -463,8 +455,9 @@ pass_rate: 82.14%
 | `app/observability/trace_manager.py` | 结构化 Trace 管理。 |
 | `app/resilience/circuit_breaker.py` | 轻量级进程内熔断器。 |
 | `app/resilience/fallback.py` | 弱依赖异常降级结果封装。 |
-| `eval/cases.yaml` | 自动化评估测试集。 |
-| `eval/run_eval.py` | eval 执行入口。 |
-| `eval/reports/latest.md` | 最新 Markdown 评估报告。 |
+| `eval/cases_dev.yaml` | 30 意图/90 条表达的开发集。 |
+| `eval/cases_test.yaml` | 10 意图/30 条表达的隔离测试集。 |
+| `eval/run_eval.py` | 结果等价 eval 执行入口。 |
+| `eval/run_benchmarks.py` | 缓存消融、Trace 分析与 API 压测统一入口。 |
 | `conf/app_config.yaml` | 应用配置模板。 |
 | `frontend/` | React + Vite 前端项目。 |

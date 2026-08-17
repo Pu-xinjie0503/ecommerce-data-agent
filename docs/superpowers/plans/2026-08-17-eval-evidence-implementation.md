@@ -8,6 +8,15 @@
 
 **Tech Stack:** Python 3.9+、pytest、PyYAML、LangGraph、SQLAlchemy、现有 Trace JSON。
 
+## 实施记录（2026-08-17）
+
+- 已完成结果等价比较、分类指标、实验哈希与可比性校验。
+- 已完成缓存 disabled/cold/warm 控制、请求级缓存统计和 Trace 并行召回指标。
+- 已完成 30 意图/90 Query 开发集、10 意图/30 Query 隔离测试集及固定 API 压测集。
+- 已完成统一运行入口、API 预热与吞吐量统计、A/B 对比工具和运行文档。
+- 离线验证结果：`56 passed`；`app/eval/tests` 编译通过；YAML 与 `git diff --check` 通过。
+- 未执行 Docker、LLM、Embedding、向量库、ES、MySQL 和真实 API 集成评测，量化结论等待用户运行后的报告与 Trace。
+
 ---
 
 ### Task 1: 结果等价比较器
@@ -16,10 +25,10 @@
 - Create: `eval/result_comparator.py`
 - Create: `tests/test_result_comparator.py`
 
-- [ ] 先编写失败测试，覆盖空值、Decimal/浮点容差、忽略行顺序、保留行顺序、列缺失和重复行。
-- [ ] 运行 `uv run pytest tests/test_result_comparator.py -q`，确认因模块缺失而失败。
-- [ ] 实现 `compare_results(actual, expected, ordered=False, tolerance=1e-6)`，返回结构化比较结果和失败原因。
-- [ ] 再次运行测试，确认全部通过。
+- [x] 先编写失败测试，覆盖空值、Decimal/浮点容差、忽略行顺序、保留行顺序、列缺失和重复行。
+- [x] 运行 `uv run pytest tests/test_result_comparator.py -q`，确认因模块缺失而失败。
+- [x] 实现 `compare_results(actual, expected, ordered=False, tolerance=1e-6)`，返回结构化比较结果和失败原因。
+- [x] 再次运行测试，确认全部通过。
 
 ### Task 2: 分类指标与实验可比性
 
@@ -122,4 +131,3 @@
 - [ ] 运行 `uv run python -m compileall app eval tests`。
 - [ ] 检查 `git diff --check` 和 `git status --short`。
 - [ ] 明确说明未运行的 Docker/LLM 集成评测，并等待用户运行后分析 Trace。
-
