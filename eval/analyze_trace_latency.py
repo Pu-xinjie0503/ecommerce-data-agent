@@ -68,7 +68,8 @@ def main() -> None:
         "source_report": str(report_path),
         "baseline_report": str(resolve_path(args.baseline)) if args.baseline else None,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "validation_note": "本次 cache 验收使用 DeepSeek 官方 API / deepseek-chat；由于模型变化，pass_rate 仅用于链路验收，不作为同模型严格对比。",
+        "experiment": report.get("experiment") or {},
+        "validation_note": "性能结论仅在模型、Prompt、数据集和关键参数一致时进行横向比较。",
         "summary": summary,
         "step_stats": step_stats,
         "slowest_cases": slowest_cases(analyzed_cases, args.top_n),
@@ -78,9 +79,8 @@ def main() -> None:
         "comparison": comparison,
     }
 
-    today = datetime.now().strftime("%Y%m%d")
-    json_path = resolve_output_path(args.out_json, PROJECT_ROOT / "eval" / "reports" / f"performance_cache_compare_{today}.json")
-    md_path = resolve_output_path(args.out_md, PROJECT_ROOT / "eval" / f"performance_cache_compare_{today}.md")
+    json_path = resolve_output_path(args.out_json, report_path.parent / "trace_analysis.json")
+    md_path = resolve_output_path(args.out_md, report_path.parent / "trace_analysis.md")
 
     json_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,7 +97,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-json", default=None, help="输出 JSON 报告路径")
     parser.add_argument("--out-md", default=None, help="输出 Markdown 报告路径")
     parser.add_argument("--top-n", type=int, default=10, help="最慢 case 数量")
-    parser.add_argument("--baseline", default="eval/reports/performance_baseline_20260528.json", help="性能对比基线 JSON 路径")
+    parser.add_argument("--baseline", default=None, help="可选且实验条件一致的 Trace 分析基线 JSON")
     return parser.parse_args()
 
 
@@ -333,6 +333,8 @@ def build_summary(report: dict[str, Any], cases: list[dict[str, Any]], durations
         "passed": summary.get("passed"),
         "failed": summary.get("failed"),
         "pass_rate": summary.get("pass_rate"),
+        "execution_accuracy": summary.get("execution_accuracy"),
+        "intent_macro_accuracy": summary.get("intent_macro_accuracy"),
         "missing_traces": missing_traces,
         "total_duration_ms": round(sum(durations), 2),
         "avg_duration_ms": round(avg(durations), 2),

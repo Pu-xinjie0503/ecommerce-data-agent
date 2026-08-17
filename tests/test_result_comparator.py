@@ -65,3 +65,14 @@ def test_compare_results_preserves_duplicate_rows():
     assert comparison.matched is False
     assert comparison.reasons == ["结果行数不一致：actual=2 expected=1"]
 
+
+def test_compare_results_can_ignore_alias_names():
+    """Execution Accuracy 可忽略不同 SQL 写法产生的列别名。"""
+
+    comparison = compare_results(
+        actual=[{"sales": 10, "region": "华北"}],
+        expected=[{"total_sales": 10, "region_name": "华北"}],
+        compare_columns=False,
+    )
+
+    assert comparison.matched is True

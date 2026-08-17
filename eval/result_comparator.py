@@ -21,6 +21,7 @@ def compare_results(
     *,
     ordered: bool = False,
     tolerance: float = 1e-6,
+    compare_columns: bool = True,
 ) -> ResultComparison:
     """比较两个查询结果，支持数值容差和可选的行顺序语义。"""
 
@@ -35,7 +36,7 @@ def compare_results(
 
     actual_columns = _collect_columns(actual_rows)
     expected_columns = _collect_columns(expected_rows)
-    if actual_columns != expected_columns:
+    if compare_columns and actual_columns != expected_columns:
         return ResultComparison(
             matched=False,
             reasons=[
@@ -48,7 +49,12 @@ def compare_results(
             zip(actual_rows, expected_rows),
             start=1,
         ):
-            if not _rows_equal(actual_row, expected_row, tolerance):
+            if not _rows_equal(
+                actual_row,
+                expected_row,
+                tolerance,
+                compare_columns=compare_columns,
+            ):
                 return ResultComparison(
                     matched=False,
                     reasons=[f"第 {index} 行顺序或行值不一致"],
@@ -61,7 +67,12 @@ def compare_results(
             (
                 index
                 for index, expected_row in enumerate(unmatched_expected)
-                if _rows_equal(actual_row, expected_row, tolerance)
+                if _rows_equal(
+                    actual_row,
+                    expected_row,
+                    tolerance,
+                    compare_columns=compare_columns,
+                )
             ),
             None,
         )
@@ -110,7 +121,20 @@ def _collect_columns(rows: list[dict[str, Any]]) -> set[str]:
     return {column for row in rows for column in row}
 
 
-def _rows_equal(actual: dict[str, Any], expected: dict[str, Any], tolerance: float) -> bool:
+def _rows_equal(
+    actual: dict[str, Any],
+    expected: dict[str, Any],
+    tolerance: float,
+    *,
+    compare_columns: bool,
+) -> bool:
+    if len(actual) != len(expected):
+        return False
+    if not compare_columns:
+        return all(
+            _values_equal(actual_value, expected_value, tolerance)
+            for actual_value, expected_value in zip(actual.values(), expected.values())
+        )
     if actual.keys() != expected.keys():
         return False
     return all(
@@ -125,4 +149,3 @@ def _values_equal(actual: Any, expected: Any, tolerance: float) -> bool:
     if isinstance(actual, Number) and isinstance(expected, Number):
         return abs(float(actual) - float(expected)) <= tolerance
     return actual == expected
-

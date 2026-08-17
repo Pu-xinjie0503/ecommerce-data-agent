@@ -1,5 +1,7 @@
 """/api/query SSE 接口压测脚本。"""
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
@@ -14,9 +16,11 @@ from typing import Any
 import httpx
 import yaml
 
+from eval.experiment import file_sha256
+
 
 DEFAULT_URL = "http://127.0.0.1:8000/api/query"
-REPORT_DATE = "20260601"
+DEFAULT_CASES_FILE = Path(__file__).with_name("benchmark_cases.yaml")
 NORMAL_CASES = [
     {"id": "normal_001", "query": "华北地区的总销售额"},
     {"id": "normal_002", "query": "统计美的品牌的销售额"},
@@ -85,8 +89,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="压测 /api/query SSE 接口")
     parser.add_argument("--url", default=DEFAULT_URL, help="API 地址")
     parser.add_argument("--concurrency", type=int, default=1, help="并发数")
-    parser.add_argument("--requests", type=int, default=8, help="总请求数")
-    parser.add_argument("--cases", default=None, help="可选 YAML case 文件；传入后覆盖 --case-set")
+    parser.add_argument("--requests", type=int, default=50, help="计入统计的总请求数")
+    parser.add_argument("--cases", default=str(DEFAULT_CASES_FILE), help="固定 YAML case 文件")
     parser.add_argument(
         "--case-set",
         choices=["normal-only", "mixed-core8"],
@@ -96,6 +100,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-md", default=None, help="Markdown 报告输出路径")
     parser.add_argument("--output-json", default=None, help="JSON 报告输出路径")
     parser.add_argument("--timeout", type=float, default=120.0, help="单请求超时时间，秒")
+    parser.add_argument("--warmup-requests", type=int, default=5, help="不计入统计的预热请求数")
+    parser.add_argument("--run-id", default=None, help="运行标识，默认按当前时间生成")
     return parser.parse_args()
 
 
@@ -256,7 +262,10 @@ async def request_once(
 async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     cases = load_cases(args.cases, args.case_set)
     planned_cases = [cases[index % len(cases)] for index in range(args.requests)]
+    warmup_cases = [cases[index % len(cases)] for index in range(args.warmup_requests)]
     semaphore = asyncio.Semaphore(args.concurrency)
+    args.run_id = args.run_id or datetime.now().strftime("api-%Y%m%d-%H%M%S")
+    args.cases_sha256 = file_sha256(args.cases) if args.cases else _cases_sha256(cases)
 
     async with httpx.AsyncClient() as client:
         async def run_limited(index: int, case: dict[str, Any]) -> RequestResult:
@@ -268,6 +277,11 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     request_index=index,
                     timeout=args.timeout,
                 )
+
+        if warmup_cases:
+            await asyncio.gather(
+                *(run_limited(index + 1, case) for index, case in enumerate(warmup_cases))
+            )
 
         started = time.perf_counter()
         results = await asyncio.gather(
@@ -314,26 +328,41 @@ def build_report(args: argparse.Namespace, results: list[RequestResult], total_d
         "p99_latency_ms": round(percentile(durations, 0.99), 2),
         "max_latency_ms": round(max(durations), 2) if durations else 0.0,
         "duration_seconds": round(total_duration_seconds, 2),
+        "throughput_rps": round(len(results) / total_duration_seconds, 2)
+        if total_duration_seconds > 0
+        else 0.0,
     }
 
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "run_id": args.run_id,
         "url": args.url,
         "case_set": args.case_set,
         "concurrency": args.concurrency,
         "requests": args.requests,
+        "warmup_requests": args.warmup_requests,
         "timeout": args.timeout,
         "cases_file": args.cases,
+        "cases_sha256": args.cases_sha256,
         "summary": summary,
         "results": [asdict(item) for item in results],
         "slowest_top_10": [asdict(item) for item in slowest],
     }
 
 
-def default_output_paths() -> tuple[Path, Path]:
+def _cases_sha256(cases: list[dict[str, Any]]) -> str:
+    """为内置 Case 生成稳定哈希。"""
+
+    import hashlib
+
+    content = json.dumps(cases, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(content).hexdigest()
+
+
+def default_output_paths(run_id: str) -> tuple[Path, Path]:
     return (
-        Path(f"eval/api_benchmark_deepseek_{REPORT_DATE}.md"),
-        Path(f"eval/reports/api_benchmark_deepseek_{REPORT_DATE}.json"),
+        Path("eval/reports") / run_id / "benchmark.md",
+        Path("eval/reports") / run_id / "benchmark.json",
     )
 
 
@@ -349,19 +378,22 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         "# API Benchmark 报告",
         "",
         f"生成时间：{report['generated_at']}",
+        f"run_id：{report['run_id']}",
         f"URL：{report['url']}",
         f"case_set：{report['case_set']}",
         f"并发数：{report['concurrency']}",
         f"请求数：{report['requests']}",
+        f"预热请求数（不计入统计）：{report['warmup_requests']}",
+        f"Case SHA-256：{report['cases_sha256']}",
         "",
         "## 总体统计",
         "",
-        "| total_requests | normal_success_count | expected_business_outcome_count | technical_error_count | technical_error_rate | avg_latency_ms | p50 | p90 | p95 | p99 | max |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| total_requests | normal_success_count | expected_business_outcome_count | technical_error_count | technical_error_rate | throughput_rps | avg_latency_ms | p50 | p90 | p95 | p99 | max |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         (
             f"| {summary['total_requests']} | {summary['normal_success_count']} | "
             f"{summary['expected_business_outcome_count']} | {summary['technical_error_count']} | "
-            f"{summary['technical_error_rate']}% | {summary['avg_latency_ms']} | "
+            f"{summary['technical_error_rate']}% | {summary['throughput_rps']} | {summary['avg_latency_ms']} | "
             f"{summary['p50_latency_ms']} | {summary['p90_latency_ms']} | {summary['p95_latency_ms']} | "
             f"{summary['p99_latency_ms']} | {summary['max_latency_ms']} |"
         ),
@@ -415,11 +447,11 @@ def print_summary(report: dict[str, Any]) -> None:
 
 async def main() -> None:
     args = parse_args()
-    if args.concurrency <= 0 or args.requests <= 0:
-        raise ValueError("--concurrency 和 --requests 必须大于 0")
+    if args.concurrency <= 0 or args.requests <= 0 or args.warmup_requests < 0:
+        raise ValueError("--concurrency 和 --requests 必须大于 0，--warmup-requests 不能小于 0")
 
     report = await run_benchmark(args)
-    default_md, default_json = default_output_paths()
+    default_md, default_json = default_output_paths(report["run_id"])
     output_md = Path(args.output_md) if args.output_md else default_md
     output_json = Path(args.output_json) if args.output_json else default_json
     write_markdown(output_md, report)

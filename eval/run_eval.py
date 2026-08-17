@@ -1,5 +1,7 @@
 """轻量级问数 Agent 回归评估脚本。"""
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
@@ -8,8 +10,6 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from app.agent.context import DataAgentContext
 from app.agent.graph import graph
@@ -28,17 +28,29 @@ from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
 from app.repositories.mysql.meta.meta_mysql_repository import MetaMySQLRepository
 from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantRepository
 from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
+from app.agent.nodes import keyword_expansion_cache
+from app.conf.app_config import app_config
+from eval.case_loader import EvalCaseConfigError, load_case_file
+from eval.experiment import file_sha256, git_revision, paths_sha256
+from eval.metrics import build_eval_metrics
+from eval.result_comparator import compare_results
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CASES_PATH = PROJECT_ROOT / "eval" / "cases.yaml"
 REPORTS_DIR = PROJECT_ROOT / "eval" / "reports"
-LATEST_JSON_PATH = REPORTS_DIR / "latest.json"
-LATEST_MD_PATH = REPORTS_DIR / "latest.md"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="运行问数 Agent 回归评估。")
     parser.add_argument("--cases", default=str(CASES_PATH), help="eval cases YAML 路径")
+    parser.add_argument("--run-id", default=None, help="本次实验 ID，默认使用时间戳")
+    parser.add_argument(
+        "--cache-mode",
+        choices=["disabled", "cold", "warm"],
+        default="cold",
+        help="缓存实验模式",
+    )
+    parser.add_argument("--strict", action="store_true", help="启用 Gold SQL 与分层字段严格校验")
     return parser.parse_args()
 
 
@@ -47,8 +59,7 @@ def resolve_path(path: str | Path) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
-class EvalConfigError(ValueError):
-    pass
+EvalConfigError = EvalCaseConfigError
 
 
 class EvalQueryError(RuntimeError):
@@ -57,26 +68,13 @@ class EvalQueryError(RuntimeError):
         self.trace_path = trace_path
 
 
-def load_cases(cases_path: Path = CASES_PATH) -> list[dict[str, Any]]:
-    with cases_path.open("r", encoding="utf-8") as file:
-        data = yaml.safe_load(file)
-
-    if isinstance(data, dict):
-        cases = data.get("cases")
-    else:
-        cases = data
-
-    if not isinstance(cases, list) or not cases:
-        raise EvalConfigError(f"{cases_path} 必须包含非空 cases 列表")
-
-    for index, case in enumerate(cases, start=1):
-        if not isinstance(case, dict):
-            raise EvalConfigError(f"第 {index} 条 case 必须是对象")
-        if not case.get("id"):
-            raise EvalConfigError(f"第 {index} 条 case 缺少 id")
-        if not case.get("query"):
-            raise EvalConfigError(f"case {case.get('id')} 缺少 query")
-
+def load_cases(
+    cases_path: Path = CASES_PATH,
+    *,
+    strict: bool = False,
+) -> list[dict[str, Any]]:
+    cases = load_case_file(cases_path, strict=strict)
+    for case in cases:
         case.setdefault("expected_blocked", False)
         case.setdefault("expected_tables", [])
         case.setdefault("expected_metrics", [])
@@ -120,6 +118,38 @@ def result_row_count(result: Any) -> int:
     if result is None:
         return 0
     return 1
+
+
+def configure_cache_mode(cache_mode: str) -> None:
+    """按实验模式配置并重置两类进程内缓存。"""
+
+    enabled = cache_mode != "disabled"
+    embedding_client_manager.set_cache_enabled(enabled)
+    keyword_expansion_cache.set_cache_enabled(enabled)
+    embedding_client_manager.clear_cache(reset_stats=True)
+    keyword_expansion_cache.clear_cache(reset_stats=True)
+
+
+def build_experiment_metadata(
+    *,
+    run_id: str,
+    cases_path: Path,
+    cache_mode: str,
+) -> dict[str, Any]:
+    """构造用于 Trace 和报告可比性校验的实验元数据。"""
+
+    prompt_paths = list((PROJECT_ROOT / "prompts").glob("*.prompt"))
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "model": app_config.llm.model_name,
+        "temperature": 0,
+        "embedding_model": app_config.embedding.model,
+        "dataset_sha256": file_sha256(cases_path),
+        "prompt_sha256": paths_sha256(prompt_paths),
+        "cache_mode": cache_mode,
+        "code_revision": git_revision(PROJECT_ROOT),
+    }
 
 
 def evaluate_case_result(
@@ -250,7 +280,10 @@ async def close_clients() -> None:
     await dw_mysql_client_manager.close()
 
 
-async def run_agent_query(query: str, case_id: str) -> dict[str, Any]:
+async def run_agent_query(
+    case: dict[str, Any],
+    experiment: dict[str, Any],
+) -> dict[str, Any]:
     if qdrant_client_manager.client is None:
         raise RuntimeError("Qdrant client 未初始化")
     if es_client_manager.client is None:
@@ -260,22 +293,38 @@ async def run_agent_query(query: str, case_id: str) -> dict[str, Any]:
     if dw_mysql_client_manager.session_factory is None:
         raise RuntimeError("DW MySQL session_factory 未初始化")
 
-    request_id = f"eval-{case_id}-{uuid.uuid4().hex[:8]}"
+    query = case["query"]
+    case_id = case["id"]
+    request_id = f"{experiment['run_id']}-{case_id}-{uuid.uuid4().hex[:8]}"
     request_id_token = request_id_ctx_var.set(request_id)
-    trace_manager = TraceManager(request_id=request_id, query=query)
+    case_experiment = {
+        **experiment,
+        "case_id": case_id,
+        "intent_id": case.get("intent_id"),
+        "category": case.get("category"),
+        "paraphrase_id": case.get("paraphrase_id"),
+    }
+    trace_manager = TraceManager(
+        request_id=request_id,
+        query=query,
+        root_dir=PROJECT_ROOT / "traces" / "eval" / experiment["run_id"],
+        experiment=case_experiment,
+    )
+    agent_started_at = time.perf_counter()
 
     try:
         async with (
             meta_mysql_client_manager.session_factory() as meta_session,
             dw_mysql_client_manager.session_factory() as dw_session,
         ):
+            dw_repository = DWMySQLRepository(dw_session)
             context = DataAgentContext(
                 column_qdrant_repository=ColumnQdrantRepository(qdrant_client_manager.client),
                 embedding_client=embedding_client_manager,
                 metric_qdrant_repository=MetricQdrantRepository(qdrant_client_manager.client),
                 value_es_repository=ValueESRepository(es_client_manager.client),
                 meta_mysql_repository=MetaMySQLRepository(meta_session),
-                dw_mysql_repository=DWMySQLRepository(dw_session),
+                dw_mysql_repository=dw_repository,
                 request_id=request_id,
                 trace_manager=trace_manager,
             )
@@ -291,7 +340,27 @@ async def run_agent_query(query: str, case_id: str) -> dict[str, Any]:
 
             trace_manager.finish("success")
             trace_path = trace_manager.save()
-            return {"final_state": final_state, "trace_path": trace_path}
+            agent_duration_ms = round((time.perf_counter() - agent_started_at) * 1000, 2)
+
+            gold_result = None
+            gold_error = None
+            gold_duration_ms = None
+            if case.get("gold_sql"):
+                gold_started_at = time.perf_counter()
+                try:
+                    gold_result = await dw_repository.run(case["gold_sql"])
+                except Exception as exc:
+                    gold_error = str(exc)
+                gold_duration_ms = round((time.perf_counter() - gold_started_at) * 1000, 2)
+
+            return {
+                "final_state": final_state,
+                "trace_path": trace_path,
+                "agent_duration_ms": agent_duration_ms,
+                "gold_result": gold_result,
+                "gold_error": gold_error,
+                "gold_duration_ms": gold_duration_ms,
+            }
     except Exception as exc:
         trace_manager.finish("failed")
         trace_path = trace_manager.save()
@@ -315,23 +384,35 @@ def get_trace_step_names(trace_path: str) -> list[str]:
     return [step.get("name") for step in steps if isinstance(step, dict) and step.get("name")]
 
 
-async def run_case(case: dict[str, Any]) -> dict[str, Any]:
+async def run_case(
+    case: dict[str, Any],
+    experiment: dict[str, Any],
+) -> dict[str, Any]:
     started_at = time.perf_counter()
     final_state: dict[str, Any] = {}
     trace_path = ""
     exception: str | None = None
+    gold_result = None
+    gold_error = None
+    gold_duration_ms = None
+    agent_duration_ms = None
 
     try:
-        agent_result = await run_agent_query(case["query"], case["id"])
+        agent_result = await run_agent_query(case, experiment)
         final_state = agent_result["final_state"]
         trace_path = agent_result["trace_path"]
+        agent_duration_ms = agent_result["agent_duration_ms"]
+        gold_result = agent_result["gold_result"]
+        gold_error = agent_result["gold_error"]
+        gold_duration_ms = agent_result["gold_duration_ms"]
     except EvalQueryError as exc:
         exception = str(exc)
         trace_path = exc.trace_path
     except Exception as exc:
         exception = str(exc)
 
-    duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+    evaluation_duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+    duration_ms = agent_duration_ms or evaluation_duration_ms
     sql = final_state.get("sql")
     result = final_state.get("result")
     state_error = final_state.get("error")
@@ -350,8 +431,12 @@ async def run_case(case: dict[str, Any]) -> dict[str, Any]:
     missing_values = final_state.get("missing_values")
     matched_values = final_state.get("matched_values")
     trace_step_names = get_trace_step_names(trace_path)
+    legacy_case = dict(case)
+    if case.get("gold_sql"):
+        legacy_case["must_contain_sql"] = []
+        legacy_case["forbidden_sql"] = []
     passed, reasons, sql_generated, sql_executed = evaluate_case_result(
-        case=case,
+        case=legacy_case,
         sql=sql,
         result=result,
         state_error=state_error,
@@ -367,18 +452,49 @@ async def run_case(case: dict[str, Any]) -> dict[str, Any]:
         matched_values=matched_values,
     )
 
+    execution_matched = None
+    if case.get("gold_sql"):
+        if gold_error:
+            passed = False
+            reasons.append(f"Gold SQL 执行失败：{gold_error}")
+            execution_matched = False
+        elif result is None:
+            passed = False
+            execution_matched = False
+        else:
+            comparison = compare_results(
+                actual=result,
+                expected=gold_result,
+                ordered=bool(case.get("ordered_result")),
+                tolerance=float(case.get("tolerance", 1e-6)),
+                compare_columns=bool(case.get("compare_columns", False)),
+            )
+            execution_matched = comparison.matched
+            if not comparison.matched:
+                passed = False
+                reasons.extend(comparison.reasons)
+
     return {
         "id": case["id"],
         "query": case["query"],
+        "intent_id": case.get("intent_id"),
+        "paraphrase_id": case.get("paraphrase_id"),
+        "category": case.get("category"),
         "difficulty": case.get("difficulty"),
         "description": case.get("description"),
         "passed": passed,
         "reasons": reasons,
         "sql_generated": sql_generated,
         "sql_executed": sql_executed,
+        "execution_matched": execution_matched,
         "sql": normalize_sql(sql),
         "result_preview": result_preview(result),
         "result_row_count": result_row_count(result),
+        "gold_sql": normalize_sql(case.get("gold_sql")),
+        "gold_result_preview": result_preview(gold_result),
+        "gold_result_row_count": result_row_count(gold_result),
+        "gold_error": gold_error,
+        "gold_duration_ms": gold_duration_ms,
         "risk_type": risk_type,
         "guard_reason": guard_reason,
         "error_type": error_type,
@@ -395,6 +511,7 @@ async def run_case(case: dict[str, Any]) -> dict[str, Any]:
         "matched_values": matched_values,
         "trace_path": trace_path,
         "duration_ms": duration_ms,
+        "evaluation_duration_ms": evaluation_duration_ms,
         "error": exception or state_error,
     }
 
@@ -405,48 +522,63 @@ def build_summary(case_reports: list[dict[str, Any]], duration_seconds: float) -
     failed = total - passed
     pass_rate = round(passed / total * 100, 2) if total else 0.0
 
+    evidence_metrics = build_eval_metrics(case_reports)
     return {
         "total": total,
         "passed": passed,
         "failed": failed,
         "pass_rate": pass_rate,
         "duration_seconds": round(duration_seconds, 2),
+        **evidence_metrics,
     }
 
 
-def write_json_report(report: dict[str, Any]) -> None:
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    with LATEST_JSON_PATH.open("w", encoding="utf-8") as file:
+def write_json_report(report: dict[str, Any], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as file:
         json.dump(report, file, ensure_ascii=False, indent=2, default=str)
 
 
-def write_markdown_report(report: dict[str, Any]) -> None:
+def write_markdown_report(report: dict[str, Any], output_path: Path) -> None:
     summary = report["summary"]
+    experiment = report["experiment"]
     lines = [
         "# 问数 Agent 自动化评估报告",
         "",
         f"生成时间：{report['generated_at']}",
         "",
+        "## 实验元数据",
+        "",
+        "| run_id | model | temperature | cache_mode | dataset_sha256 | prompt_sha256 |",
+        "|---|---|---:|---|---|---|",
+        (
+            f"| {experiment['run_id']} | {experiment['model']} | {experiment['temperature']} | "
+            f"{experiment['cache_mode']} | {experiment['dataset_sha256']} | "
+            f"{experiment['prompt_sha256']} |"
+        ),
+        "",
         "## 总体统计",
         "",
-        "| total | passed | failed | pass_rate | duration_seconds |",
-        "|---:|---:|---:|---:|---:|",
+        "| total | passed | failed | pass_rate | execution_accuracy | intent_macro_accuracy | P95 ms |",
+        "|---:|---:|---:|---:|---:|---:|---:|",
         (
             f"| {summary['total']} | {summary['passed']} | {summary['failed']} | "
-            f"{summary['pass_rate']}% | {summary['duration_seconds']} |"
+            f"{summary['pass_rate']}% | {summary['execution_accuracy']}% | "
+            f"{summary['intent_macro_accuracy']}% | {summary['latency_ms']['p95']} |"
         ),
         "",
         "## Case 明细",
         "",
-        "| id | difficulty | status | duration_ms | trace_path | reasons |",
-        "|---|---|---|---:|---|---|",
+        "| id | intent_id | category | status | execution_matched | duration_ms | trace_path | reasons |",
+        "|---|---|---|---|---|---:|---|---|",
     ]
 
     for item in report["cases"]:
         status = "PASS" if item["passed"] else "FAIL"
         reasons = "；".join(item["reasons"]) if item["reasons"] else "-"
         lines.append(
-            f"| {item['id']} | {item['difficulty']} | {status} | "
+            f"| {item['id']} | {item.get('intent_id') or '-'} | {item.get('category') or '-'} | "
+            f"{status} | {item.get('execution_matched')} | "
             f"{item['duration_ms']} | {item.get('trace_path') or '-'} | {reasons} |"
         )
 
@@ -485,7 +617,8 @@ def write_markdown_report(report: dict[str, Any]) -> None:
             ]
         )
 
-    with LATEST_MD_PATH.open("w", encoding="utf-8") as file:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as file:
         file.write("\n".join(lines))
 
 
@@ -499,28 +632,56 @@ def print_case_report(case_report: dict[str, Any]) -> None:
         print(f"  - {reason}")
 
 
-def print_summary(summary: dict[str, Any]) -> None:
+def print_summary(summary: dict[str, Any], json_path: Path, markdown_path: Path) -> None:
     print("\n总体统计")
     print(f"  total: {summary['total']}")
     print(f"  passed: {summary['passed']}")
     print(f"  failed: {summary['failed']}")
     print(f"  pass_rate: {summary['pass_rate']}%")
+    print(f"  execution_accuracy: {summary['execution_accuracy']}%")
+    print(f"  intent_macro_accuracy: {summary['intent_macro_accuracy']}%")
     print(f"  duration_seconds: {summary['duration_seconds']}")
-    print(f"\n报告已保存：{LATEST_MD_PATH}")
-    print(f"报告已保存：{LATEST_JSON_PATH}")
+    print(f"\n报告已保存：{markdown_path}")
+    print(f"报告已保存：{json_path}")
 
 
 async def main() -> None:
     args = parse_args()
     cases_path = resolve_path(args.cases)
-    cases = load_cases(cases_path)
-    started_at = time.perf_counter()
+    cases = load_cases(cases_path, strict=args.strict)
+    run_id = args.run_id or datetime.now().strftime("eval-%Y%m%d-%H%M%S")
+    configure_cache_mode(args.cache_mode)
+    experiment = build_experiment_metadata(
+        run_id=run_id,
+        cases_path=cases_path,
+        cache_mode=args.cache_mode,
+    )
+    experiment["warmup_query_count"] = len(cases) if args.cache_mode == "warm" else 0
+    experiment["measurement_query_count"] = len(cases)
+    output_dir = REPORTS_DIR / run_id
+    json_path = output_dir / "eval.json"
+    markdown_path = output_dir / "eval.md"
+    warmup_duration_seconds = 0.0
     case_reports: list[dict[str, Any]] = []
 
     init_clients()
     try:
+        if args.cache_mode == "warm":
+            print(f"开始暖缓存预热：{len(cases)} 条 Query（不计入报告）")
+            warmup_experiment = {**experiment, "phase": "warmup", "measured": False}
+            warmup_started_at = time.perf_counter()
+            for index, case in enumerate(cases, start=1):
+                await run_case(case, warmup_experiment)
+                print(f"[WARMUP] {index}/{len(cases)} {case['id']}")
+            warmup_duration_seconds = time.perf_counter() - warmup_started_at
+            embedding_client_manager.reset_cache_stats()
+            keyword_expansion_cache.reset_cache_stats()
+            print("暖缓存预热完成，已清零命中统计并开始计量轮")
+
+        measured_experiment = {**experiment, "phase": "measured", "measured": True}
+        started_at = time.perf_counter()
         for case in cases:
-            case_report = await run_case(case)
+            case_report = await run_case(case, measured_experiment)
             case_reports.append(case_report)
             print_case_report(case_report)
     finally:
@@ -530,13 +691,15 @@ async def main() -> None:
     summary = build_summary(case_reports, duration_seconds)
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "experiment": experiment,
         "case_file": str(cases_path),
+        "warmup_duration_seconds": round(warmup_duration_seconds, 2),
         "summary": summary,
         "cases": case_reports,
     }
-    write_json_report(report)
-    write_markdown_report(report)
-    print_summary(summary)
+    write_json_report(report, json_path)
+    write_markdown_report(report, markdown_path)
+    print_summary(summary, json_path, markdown_path)
 
 
 if __name__ == "__main__":
