@@ -4,7 +4,7 @@
 
 ## 已验证结果
 
-2026-08-17 使用固定模型、Prompt、数据集哈希完成 Baseline/Candidate 对比；准确率采用 cold-cache 隔离评测，API 稳定性采用 10 并发、5 次预热、50 次计量请求：
+使用固定模型、Prompt、数据集哈希完成 Baseline/Candidate 对比；准确率采用 cold-cache 隔离评测，API 稳定性采用 10 并发、5 次预热、50 次计量请求：
 
 | 指标 | Baseline | Candidate | 变化 |
 |---|---:|---:|---:|
