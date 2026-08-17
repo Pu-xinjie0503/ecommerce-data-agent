@@ -37,7 +37,10 @@ from app.agent.nodes.filter_table import filter_table
 from app.agent.nodes.generate_sql import generate_sql
 from app.agent.nodes.govern_sql import govern_sql
 from app.agent.nodes.guard_query import guard_query
-from app.agent.nodes.keyword_expansion_cache import trace_keyword_cache_stats
+from app.agent.nodes.keyword_expansion_cache import (
+    is_cache_enabled as is_keyword_cache_enabled,
+    trace_keyword_cache_stats,
+)
 from app.agent.nodes.merge_retrieved_info import merge_retrieved_info
 from app.agent.nodes.recall_column import recall_column
 from app.agent.nodes.recall_metric import recall_metric
@@ -91,8 +94,11 @@ def trace_node(
                 output = await node_func(state, runtime)
             except Exception as exc:
                 cache_stats = {
-                    **embedding_stats.to_dict(cache_size=len(getattr(embedding_client, "_cache", {}))),
-                    **keyword_stats.to_dict(),
+                            **embedding_stats.to_dict(
+                                cache_size=len(getattr(embedding_client, "_cache", {})),
+                                enabled=embedding_client.cache_enabled,
+                            ),
+                            **keyword_stats.to_dict(enabled=is_keyword_cache_enabled()),
                 }
                 trace_manager.end_step(
                     name,
@@ -115,8 +121,11 @@ def trace_node(
             if isinstance(output, dict) and output.get("success") is False:
                 error_message = output.get("error_message")
             cache_stats = {
-                **embedding_stats.to_dict(cache_size=len(getattr(embedding_client, "_cache", {}))),
-                **keyword_stats.to_dict(),
+                **embedding_stats.to_dict(
+                    cache_size=len(getattr(embedding_client, "_cache", {})),
+                    enabled=embedding_client.cache_enabled,
+                ),
+                **keyword_stats.to_dict(enabled=is_keyword_cache_enabled()),
             }
             trace_manager.end_step(
                 name,

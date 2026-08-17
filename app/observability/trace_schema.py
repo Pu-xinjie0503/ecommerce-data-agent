@@ -1,5 +1,7 @@
 """Agent 结构化 Trace 数据结构定义。"""
 
+from __future__ import annotations
+
 from typing import Any, Literal, TypedDict
 
 TraceStepStatus = Literal["running", "success", "failed"]
@@ -29,4 +31,6 @@ class TraceRecord(TypedDict):
     end_time: str | None
     duration_ms: float | None
     trace_path: str | None
+    experiment: dict[str, Any]
+    metrics: dict[str, Any]
     steps: list[TraceStep]

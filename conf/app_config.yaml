@@ -52,3 +52,9 @@ llm:
   timeout_seconds: 30
   max_concurrency: 3
   slot_timeout_seconds: 30
+
+cache:
+  embedding_enabled: true
+  embedding_max_size: 4096
+  keyword_expansion_enabled: true
+  keyword_expansion_max_size: 1024

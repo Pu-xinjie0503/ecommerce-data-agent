@@ -1,14 +1,22 @@
 """Agent 结构化 Trace 管理器。"""
 
+from __future__ import annotations
+
 import json
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
+try:
+    from loguru import logger
+except ImportError:  # pragma: no cover - 完整运行环境会安装 loguru
+    import logging
+
+    logger = logging.getLogger(__name__)
 
 from app.observability.trace_schema import TraceRecord, TraceStep, TraceStatus
+from app.observability.trace_metrics import build_trace_metrics
 
 MAX_STRING_LENGTH = 500
 MAX_LIST_ITEMS = 5
@@ -20,7 +28,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class TraceManager:
     """记录一次 Agent 请求的结构化执行轨迹。"""
 
-    def __init__(self, request_id: str, query: str, root_dir: str | Path | None = None):
+    def __init__(
+        self,
+        request_id: str,
+        query: str,
+        root_dir: str | Path | None = None,
+        experiment: dict[str, Any] | None = None,
+    ):
         self.request_id = request_id
         self.query = query
         self.root_dir = Path(root_dir) if root_dir else PROJECT_ROOT / "traces"
@@ -35,6 +49,8 @@ class TraceManager:
             "end_time": None,
             "duration_ms": None,
             "trace_path": str(self.trace_path),
+            "experiment": dict(experiment or {}),
+            "metrics": {},
             "steps": [],
         }
         self._running_steps: dict[str, tuple[TraceStep, float]] = {}
@@ -82,6 +98,7 @@ class TraceManager:
         self.record["status"] = status
         self.record["end_time"] = _now_iso()
         self.record["duration_ms"] = round((time.perf_counter() - self.started_at) * 1000, 2)
+        self.record["metrics"] = build_trace_metrics(self.record["steps"])
 
     def save(self) -> str:
         try:

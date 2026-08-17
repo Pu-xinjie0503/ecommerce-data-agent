@@ -118,7 +118,7 @@ def analyze_case(case: dict[str, Any]) -> dict[str, Any]:
         "missing_trace": trace is None,
         "steps": steps,
         "risk_flags": extract_risk_flags(steps),
-        "parallel_recall": analyze_parallel_recall(steps),
+        "parallel_recall": extract_parallel_recall(trace) if trace else None,
     }
 
 
@@ -163,10 +163,35 @@ def analyze_parallel_recall(steps: list[dict[str, Any]]) -> dict[str, Any] | Non
         "duration_sum_ms": round(duration_sum_ms, 2),
         "wall_time_ms": round(wall_time_ms, 2),
         "estimated_saved_ms": round(max(0.0, duration_sum_ms - wall_time_ms), 2),
+        "estimated_saved_ratio": round(
+            max(0.0, duration_sum_ms - wall_time_ms) / duration_sum_ms * 100,
+            2,
+        ) if duration_sum_ms else 0.0,
+        "source": "steps",
         "steps": [
             {"name": item["name"], "duration_ms": item["duration_ms"]}
             for item in intervals
         ],
+    }
+
+
+def extract_parallel_recall(trace: dict[str, Any]) -> dict[str, Any] | None:
+    """优先读取新 Trace 根指标，旧 Trace 则从节点时间戳复算。"""
+
+    steps = trace.get("steps") or []
+    recalculated = analyze_parallel_recall(steps)
+    root_metrics = (trace.get("metrics") or {}).get("recall_parallel") or {}
+    if not root_metrics.get("available"):
+        return recalculated
+
+    return {
+        "observed": recalculated.get("observed") if recalculated else True,
+        "duration_sum_ms": root_metrics.get("sequential_estimated_ms"),
+        "wall_time_ms": root_metrics.get("parallel_wall_ms"),
+        "estimated_saved_ms": root_metrics.get("estimated_saved_ms"),
+        "estimated_saved_ratio": root_metrics.get("estimated_saved_ratio"),
+        "source": "trace.metrics",
+        "steps": recalculated.get("steps", []) if recalculated else [],
     }
 
 
@@ -184,6 +209,8 @@ def collect_cache_stats(steps: list[dict[str, Any]], accumulator: dict[str, Any]
         if not isinstance(cache_stats, dict):
             continue
         for key, value in cache_stats.items():
+            if isinstance(value, bool) or key.endswith("_hit_rate") or key.endswith("_enabled"):
+                continue
             number = int(to_float(value) or 0)
             if key.startswith("embedding_cache_"):
                 if key.endswith("_size"):
@@ -191,7 +218,13 @@ def collect_cache_stats(steps: list[dict[str, Any]], accumulator: dict[str, Any]
                 else:
                     accumulator["embedding"][key] += number
             elif key.startswith("keyword_expand_cache_"):
-                accumulator["keyword_expansion"][key] += number
+                if key.endswith("_size"):
+                    accumulator["keyword_expansion"][key] = max(
+                        accumulator["keyword_expansion"].get(key, 0),
+                        number,
+                    )
+                else:
+                    accumulator["keyword_expansion"][key] += number
 
 
 def build_cache_stats(accumulator: dict[str, Any]) -> dict[str, Any]:
@@ -206,6 +239,7 @@ def build_cache_stats(accumulator: dict[str, Any]) -> dict[str, Any]:
         "embedding": {
             "embedding_cache_hit": embedding_hit,
             "embedding_cache_miss": embedding_miss,
+            "embedding_cache_bypass": embedding.get("embedding_cache_bypass", 0),
             "embedding_cache_size": embedding.get("embedding_cache_size", 0),
             "embedding_cache_hit_rate": hit_rate(embedding_hit, embedding_miss),
         },
@@ -224,6 +258,7 @@ def build_cache_stats(accumulator: dict[str, Any]) -> dict[str, Any]:
             "embedding_cache_hit_rate": hit_rate(embedding_hit, embedding_miss),
             "keyword_expand_cache_hit": keyword_hit,
             "keyword_expand_cache_miss": keyword_miss,
+            "keyword_expand_cache_bypass": keyword.get("keyword_expand_cache_bypass", 0),
             "keyword_expand_cache_hit_rate": hit_rate(keyword_hit, keyword_miss),
         },
     }
@@ -336,6 +371,10 @@ def summarize_parallel_recall(checks: list[dict[str, Any]]) -> dict[str, Any]:
         "avg_duration_sum_ms": round(avg([check["duration_sum_ms"] for check in checks]), 2),
         "avg_wall_time_ms": round(avg([check["wall_time_ms"] for check in checks]), 2),
         "avg_estimated_saved_ms": round(avg([check["estimated_saved_ms"] for check in checks]), 2),
+        "avg_estimated_saved_ratio": round(
+            avg([check.get("estimated_saved_ratio", 0.0) for check in checks]),
+            2,
+        ),
     }
 
 

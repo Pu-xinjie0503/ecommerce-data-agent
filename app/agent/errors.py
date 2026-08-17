@@ -1,5 +1,7 @@
 """Agent 结构化错误类型和状态构造工具。"""
 
+from __future__ import annotations
+
 from enum import Enum
 from typing import Any
 

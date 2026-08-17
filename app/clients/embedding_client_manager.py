@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 from collections import OrderedDict
 from contextlib import contextmanager
@@ -20,11 +22,22 @@ class EmbeddingCacheStats:
 
     embedding_cache_hit: int = 0
     embedding_cache_miss: int = 0
+    embedding_cache_bypass: int = 0
 
-    def to_dict(self, cache_size: int | None = None) -> dict[str, int]:
+    def to_dict(
+        self,
+        cache_size: int | None = None,
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        attempts = self.embedding_cache_hit + self.embedding_cache_miss
         data = {
+            "embedding_cache_enabled": enabled,
             "embedding_cache_hit": self.embedding_cache_hit,
             "embedding_cache_miss": self.embedding_cache_miss,
+            "embedding_cache_bypass": self.embedding_cache_bypass,
+            "embedding_cache_hit_rate": (
+                round(self.embedding_cache_hit / attempts * 100, 2) if attempts else 0.0
+            ),
         }
         if cache_size is not None:
             data["embedding_cache_size"] = cache_size
@@ -44,8 +57,16 @@ def normalize_embedding_text(text: str) -> str:
 
 
 class EmbeddingClientManager:
-    def __init__(self, config: EmbeddingConfig):
+    def __init__(
+        self,
+        config: EmbeddingConfig,
+        *,
+        cache_enabled: bool = True,
+        cache_max_size: int = EMBEDDING_CACHE_MAX_SIZE,
+    ):
         self.config = config
+        self.cache_enabled = cache_enabled
+        self.cache_max_size = cache_max_size
         self.client: httpx.AsyncClient | None = None
         self._cache: OrderedDict[str, list[float]] = OrderedDict()
         self._stats = EmbeddingCacheStats()
@@ -58,6 +79,8 @@ class EmbeddingClientManager:
         return f"embedding:{self.config.model}:{normalized_text}"
 
     def _get_cached_embedding(self, cache_key: str) -> list[float] | None:
+        if not self.cache_enabled:
+            return None
         cached = self._cache.get(cache_key)
         if cached is None:
             return None
@@ -65,9 +88,11 @@ class EmbeddingClientManager:
         return cached
 
     def _set_cached_embedding(self, cache_key: str, embedding: list[float]) -> None:
+        if not self.cache_enabled:
+            return
         self._cache[cache_key] = list(embedding)
         self._cache.move_to_end(cache_key)
-        if len(self._cache) > EMBEDDING_CACHE_MAX_SIZE:
+        if len(self._cache) > self.cache_max_size:
             self._cache.popitem(last=False)
 
     def _record_hit(self) -> None:
@@ -82,6 +107,12 @@ class EmbeddingClientManager:
         if step_stats is not None:
             step_stats.embedding_cache_miss += 1
 
+    def _record_bypass(self, count: int = 1) -> None:
+        self._stats.embedding_cache_bypass += count
+        step_stats = _embedding_step_stats.get()
+        if step_stats is not None:
+            step_stats.embedding_cache_bypass += count
+
     @contextmanager
     def trace_cache_stats(self) -> Iterator[EmbeddingCacheStats]:
         """为当前 Trace step 收集 embedding 缓存统计。"""
@@ -93,20 +124,30 @@ class EmbeddingClientManager:
         finally:
             _embedding_step_stats.reset(token)
 
-    def get_cache_stats(self) -> dict[str, int]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """返回 embedding 缓存累计统计。"""
 
-        return self._stats.to_dict(cache_size=len(self._cache))
+        return self._stats.to_dict(
+            cache_size=len(self._cache),
+            enabled=self.cache_enabled,
+        )
 
     def reset_cache_stats(self) -> None:
         """重置 embedding 缓存命中统计，不清空缓存内容。"""
 
         self._stats = EmbeddingCacheStats()
 
-    def clear_cache(self) -> None:
-        """清空 embedding 缓存内容。"""
+    def clear_cache(self, *, reset_stats: bool = False) -> None:
+        """清空 embedding 缓存内容，并可同时重置累计统计。"""
 
         self._cache.clear()
+        if reset_stats:
+            self.reset_cache_stats()
+
+    def set_cache_enabled(self, enabled: bool) -> None:
+        """切换缓存读写，供同进程消融实验使用。"""
+
+        self.cache_enabled = bool(enabled)
 
     def init(self):
         self.client = httpx.AsyncClient(
@@ -137,6 +178,11 @@ class EmbeddingClientManager:
         if self.client is None:
             raise RuntimeError("Embedding client 未初始化")
 
+        if not self.cache_enabled:
+            self._record_bypass()
+            data = await self._post_embed(text)
+            return list(data[0] if data and isinstance(data[0], list) else data)
+
         cache_key = self._cache_key(text)
         cached = self._get_cached_embedding(cache_key)
         if cached is not None:
@@ -161,6 +207,10 @@ class EmbeddingClientManager:
             raise RuntimeError("Embedding client 未初始化")
         if not texts:
             return []
+        if not self.cache_enabled:
+            self._record_bypass(len(texts))
+            data = await self._post_embed(texts)
+            return self._normalize_document_embeddings(data, len(texts))
 
         results: list[list[float] | None] = [None] * len(texts)
         miss_texts: list[str] = []
@@ -208,7 +258,11 @@ class EmbeddingClientManager:
         return data
 
 
-embedding_client_manager = EmbeddingClientManager(app_config.embedding)
+embedding_client_manager = EmbeddingClientManager(
+    app_config.embedding,
+    cache_enabled=app_config.cache.embedding_enabled,
+    cache_max_size=app_config.cache.embedding_max_size,
+)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 """外部服务异常分类工具。"""
 
+from __future__ import annotations
+
 import asyncio
 from dataclasses import dataclass
 from typing import Any
