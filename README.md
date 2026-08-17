@@ -2,6 +2,22 @@
 
 电商问数 Agent 后端项目，面向电商经营分析场景，把用户的自然语言问题转换为可执行 SQL，并通过 FastAPI + LangGraph 编排完成元数据召回、字段值 grounding、SQL 生成、SQL 校验、SQL 执行和 Trace 记录。
 
+## 已验证结果
+
+2026-08-17 使用固定模型、Prompt、数据集哈希完成 Baseline/Candidate 对比；准确率采用 cold-cache 隔离评测，API 稳定性采用 10 并发、5 次预热、50 次计量请求：
+
+| 指标 | Baseline | Candidate | 变化 |
+|---|---:|---:|---:|
+| Query Pass Rate | 56.67%（17/30） | 93.33%（28/30） | +36.66 个百分点 |
+| Execution Accuracy | 52.38% | 90.48% | +38.10 个百分点 |
+| API Branch Accuracy | 70%（35/50） | 100%（50/50） | +30 个百分点 |
+| 正常 Query Grounding 误拦截 | 15/25 | 0/25 | 全部消除 |
+| API 技术错误率 | 0% | 0% | 保持 |
+| 同口径正常请求平均延迟 | 3607.73 ms | 2771.84 ms | 下降 23.17% |
+| 混合请求 P95 | 5238.22 ms | 3802.05 ms | 下降 27.42% |
+
+Candidate 在 10 并发、50 请求下得到 50/50 HTTP 200、50/50 SSE final 和 50/50 Trace。隔离评测剩余两条失败已定位为结果比较器假阴性，正式指标仍按报告记录为 28/30，不直接记为 100%。完整问题、方法、Trace 证据和结论边界见 [`docs/evaluation/2026-08-17-schema-semantics-improvement.md`](docs/evaluation/2026-08-17-schema-semantics-improvement.md)。
+
 ## 1. 项目背景：为什么做电商问数 Agent
 
 电商业务每天都会产生大量订单、商品、用户、地区、时间等维度数据。运营、商品、销售和管理人员经常需要回答类似问题：
@@ -175,6 +191,13 @@ traces/latest.json
 
 API 最终响应中也会返回 `trace_path`，便于从一次线上请求直接定位到完整执行轨迹。
 
+查询语义与 Grounding Trace 还会记录：
+
+- 维度、分组、显式过滤值、指标、时间、排序和 Top N 的结构化解析结果。
+- 解析规则证据 `parse_evidence`。
+- 是否跳过存在性校验、字段值 LLM 扩展和 fuzzy。
+- 显式/隐式 exact 候选数及实际调用次数。
+
 ### 4.5 回归不可控 → eval 测试集
 
 Agent 调整 Prompt、召回策略、SQL 校验或字段值 grounding 后，容易修好一个 case 又破坏另一个 case。
@@ -228,11 +251,31 @@ Agent 调整 Prompt、召回策略、SQL 校验或字段值 grounding 后，容�
 - Embedding / Qdrant / Elasticsearch 异常时，跳过对应召回分支并返回 `dependency_warnings`，尽量让其他召回分支继续完成。
 - 这不是分布式熔断平台，但已经体现了生产链路中“弱依赖可降级、核心链路不中断”的设计。
 
+## 项目结构
+
+```text
+app/
+  agent/                 LangGraph 状态、工作流、共享查询语义和节点
+  api/                   FastAPI 路由、Schema 与生命周期
+  clients/               LLM、Embedding、ES、Qdrant、MySQL 客户端
+  observability/         Trace、请求级指标和 SQL 风险分析
+  repositories/          ES、Qdrant、Meta MySQL、DW MySQL 仓储
+  resilience/            熔断与弱依赖降级
+  security/              SQL 治理与权限策略
+  services/              API 与 Agent 的服务层
+conf/                    应用与元数据配置
+eval/                    Eval 数据集、比较器、报告和压测入口
+frontend/                React + Vite 聊天界面
+prompts/                 SQL 生成、修正和关键词相关 Prompt
+tests/                   单元测试与回归测试
+docs/                    设计、评测记录和运行截图
+```
+
 ## 5. 快速启动命令
 
 ### 5.1 环境准备
 
-项目依赖 Python 3.9+，建议使用 `uv` 管理依赖。
+项目当前开发和验证环境使用 Python 3.12，建议使用 `uv` 管理依赖。
 
 ```bash
 uv sync
@@ -358,13 +401,13 @@ uv run python -m app.scripts.build_meta_knowledge
 
 运行截图：
 
-<img src="docs/images/query-flow-result4.png" alt="字段值 grounding 失败截图" width="750"> ```
+<img src="docs/images/query-flow-result4.png" alt="字段值 grounding 失败截图" width="750">
 
 ## 7. 自动化测试 / eval 证据
 
 ### 单元测试
 
-完整单元测试入口：
+完整单元测试入口，当前共 123 条：
 
 ```bash
 uv run python -m pytest tests
@@ -377,34 +420,34 @@ uv run python -m pytest tests
 运行隔离测试集：
 
 ```bash
-uv run python -m eval.run_eval --cases eval/cases_test.yaml --strict --cache-mode cold --run-id evidence-test-cold
+uv run python -m eval.run_eval --cases eval/cases_test.yaml --strict --cache-mode cold --run-id candidate-cold
 ```
 
-运行关闭/冷/暖缓存消融、Trace 分析和 10 并发 50 请求 API 压测：
+运行 10 并发、50 请求 API 分支压测：
 
 ```bash
-uv run python -m eval.run_benchmarks --suite-id evidence-v1 --concurrency 10 --requests 50 --warmup-requests 5
+uv run python -m eval.benchmark_api --cases eval/benchmark_cases.yaml --concurrency 10 --requests 50 --warmup-requests 5 --run-id candidate-api
 ```
 
 报告按运行 ID 写入：
 
 ```text
 eval/reports/<run_id>/
-traces/eval/<run_id>/
+traces/
 ```
 
-在真实运行完成前，README 不预填准确率、延迟提升或缓存命中率。完整运行顺序、指标口径和简历引用规则见 `eval/README.md`。
+报告与 Trace 是本地运行产物，不进入 Git。比较结果时必须保持 Case SHA、Prompt SHA、模型、温度、缓存模式、并发数和预热口径一致。完整运行口径见 `eval/README.md`，本轮对比记录见 [`docs/evaluation/2026-08-17-schema-semantics-improvement.md`](docs/evaluation/2026-08-17-schema-semantics-improvement.md)。
 
 ## 8. 后端性能与 Agent 工程化增强
 
-面试后，项目进一步补充了后端性能观测与稳定性治理能力，重点不再只是提升 NL2SQL case 通过率，而是让 Agent 查询链路更可排查、可压测、可兜底。
+项目补充了后端性能观测与稳定性治理能力，使 Agent 查询链路可排查、可压测、可降级。
 
 - **SQL EXPLAIN Trace**：在 SQL 校验阶段采集 EXPLAIN 执行计划，将 `type/key/rows/Extra` 以及 `FULL_TABLE_SCAN`、`NO_INDEX_USED`、`USING_TEMPORARY`、`USING_FILESORT` 等风险标记写入 Trace 和性能报告，用于定位潜在 SQL 执行风险。
 - **SQL 执行前治理**：新增 `govern_sql` 节点，在数据库校验和执行前统一处理只读安全、敏感字段、权限条件和 LIMIT 兜底。
 - **权限隔离**：新增请求级 `PermissionContext`，支持按地区 ID / 名称注入行级权限条件；默认 admin 兼容原有本地演示和 eval。
 - **索引优化建议**：基于 EXPLAIN 风险输出 `risk_flags`、`index_suggestions` 和 `sql_rewrite_suggestions`，用于说明后续如何根据真实慢查询和访问模式做索引设计。
 - **轻量熔断降级**：为 LLM 关键词扩展、Embedding、Qdrant、Elasticsearch 等弱依赖增加进程内 CircuitBreaker 和 fallback，异常时通过 `dependency_warnings` 暴露降级信息。
-- **性能证据**：Trace 根节点记录串行召回估算、并行墙钟、估算节省毫秒与比例，离线报告同时输出端到端和节点级 P50/P90/P95；只有真实运行后才填写结论数字。
+- **性能证据**：Trace 根节点记录串行召回估算、并行墙钟、Grounding 跳过状态、exact 调用次数和缓存增量，离线报告输出端到端与节点级 P50/P90/P95。
 - **召回链路缓存**：实现进程内有界 LRU Cache，包括 Embedding Cache 和 Keyword Expansion Cache，并记录 hit/miss/bypass 与请求级增量；缓存消融严格区分 disabled、cold、warm。
 - **边界治理增强**：补充中文写库意图拦截，如“更新表”“把字段改成”等；对“看一下各品牌情况”这类缺少明确指标的问题触发澄清，避免模型强行生成 SQL。
 - **API benchmark**：新增固定 Case 的 `/api/query` 压测脚本，支持预热排除、吞吐量、P50/P90/P95/P99、technical error rate、业务分支分布和逐请求原始记录。
@@ -424,19 +467,23 @@ traces/eval/<run_id>/
 3. **Redis 分布式缓存仍是生产化方向**
    - 当前实现的是单进程 bounded LRU cache，适合本地开发和单实例优化；多实例部署时，可再引入 Redis、TTL、metadata version 和缓存失效策略。
 
-4. **复杂时间表达与 Top / 最值查询仍需增强**
-   - 例如“最近三个月”“上周同期”“环比”“同比”“销售额最高的品类”等语义，需要更稳定的日期解析、排序口径和边界 case 覆盖。
+4. **复杂时间表达与派生分析仍需增强**
+   - 例如“上周同期”“环比”“同比”等语义，需要更完整的日期解析、指标口径和边界 Case 覆盖。
 
-5. **SQL 语义正确性仍依赖 eval 覆盖**
-   - 当前已通过 Gold SQL 执行结果等价评估语义正确性，但 40 个意图仍不能代表生产流量；后续应按真实失败样本扩充类别和边界 Case。
+5. **SQL 语义正确性仍依赖 Eval 覆盖**
+   - 当前开发集和隔离集共 120 条表达，仍不能代表生产流量；后续应按真实失败样本扩充类别和边界 Case。
 
-6. **权限、审计与大结果集治理仍需要产品化**
+6. **结果比较器仍有两个已确认边界**
+   - 聚合别名不同且维度列顺序变化时，需要对共享列按名称、剩余列按语义进行对齐。
+   - Top N 出现并列值时，需要确定性二级排序或支持并列集合比较。
+
+7. **权限、审计与大结果集治理仍需要产品化**
    - 当前已经有样例级地区行级权限和默认 LIMIT 兜底；真实生产环境仍需要完整 IAM / 租户隔离、字段级脱敏、审计日志、分页、异步导出和权限变更追踪。
 
-7. **Trace 脱敏、保留周期和可视化仍需完善**
+8. **Trace 脱敏、保留周期和可视化仍需完善**
    - 当前 Trace 主要落 JSON 文件，后续可以增加脱敏规则、保留周期配置和可视化页面，方便非开发人员查看每一步召回和生成过程。
 
-8. **更高级的 Agent 能力仍可继续迭代**
+9. **更高级的 Agent 能力仍可继续迭代**
    - Redis 分布式缓存、生产级分布式熔断、MySQL 索引优化、Rerank、Memory、多轮追问和外部服务标准化部署仍是后续方向，但不应混同为当前阶段已经完成的能力。
 
 ## 10. 相关文件
@@ -447,6 +494,7 @@ traces/eval/<run_id>/
 | `app/api/routers/query_router.py` | `/api/query` SSE 接口。 |
 | `app/services/query_service.py` | 查询服务，负责调用 LangGraph 并返回最终响应。 |
 | `app/agent/graph.py` | LangGraph 工作流编排。 |
+| `app/agent/query_semantics.py` | Schema 驱动的共享查询语义解析。 |
 | `app/agent/nodes/` | Agent 各节点实现。 |
 | `app/agent/nodes/govern_sql.py` | SQL 执行前治理节点。 |
 | `app/security/sql_policy.py` | SQL 只读安全、敏感字段和 LIMIT 策略。 |
@@ -460,5 +508,6 @@ traces/eval/<run_id>/
 | `eval/cases_test.yaml` | 10 意图/30 条表达的隔离测试集。 |
 | `eval/run_eval.py` | 结果等价 eval 执行入口。 |
 | `eval/run_benchmarks.py` | 缓存消融、Trace 分析与 API 压测统一入口。 |
+| `docs/evaluation/2026-08-17-schema-semantics-improvement.md` | 本轮问题、改进方法、结果与证据边界。 |
 | `conf/app_config.yaml` | 应用配置模板。 |
 | `frontend/` | React + Vite 前端项目。 |
