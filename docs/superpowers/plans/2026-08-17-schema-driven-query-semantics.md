@@ -896,7 +896,7 @@ Expected: 全部 PASS。
 
 - [ ] **Step 3: 运行全量单元测试**
 
-Run: `uv run pytest -q`
+Run: `uv run pytest tests -q`
 
 Expected: 现有 65 条测试与新增测试全部 PASS，无回归。
 
