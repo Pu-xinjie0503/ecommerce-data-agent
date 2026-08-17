@@ -128,6 +128,27 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
     if "keywords" in payload:
         summary["keywords"] = safe_jsonable(payload.get("keywords"))
 
+    if "query_semantics" in payload:
+        query_semantics = payload.get("query_semantics")
+        if isinstance(query_semantics, dict):
+            semantic_keys = (
+                "dimension_columns",
+                "group_by_columns",
+                "filter_values",
+                "metric_terms",
+                "time_expressions",
+                "order_direction",
+                "limit",
+                "parse_evidence",
+            )
+            summary["query_semantics"] = {
+                key: safe_jsonable(query_semantics.get(key))
+                for key in semantic_keys
+                if key in query_semantics
+            }
+        else:
+            summary["query_semantics"] = safe_jsonable(query_semantics)
+
     if "retrieved_value_infos" in payload:
         values = payload.get("retrieved_value_infos") or []
         summary["retrieved_value_infos"] = summarize_items(values, ["table_name", "column_name", "value", "score"])
@@ -184,9 +205,18 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
         "warning_message",
         "missing_values",
         "matched_values",
+        "grounding_validation_skipped",
+        "value_keyword_expansion_skipped",
+        "value_fuzzy_search_skipped",
+        "grounding_skip_reason",
     ):
         if key in payload:
             summary[key] = safe_jsonable(payload.get(key))
+
+    if "value_exact_search_metrics" in payload:
+        summary["value_exact_search_metrics"] = safe_jsonable(
+            payload.get("value_exact_search_metrics")
+        )
 
     if "cache_stats" in payload:
         cache_stats = payload.get("cache_stats")

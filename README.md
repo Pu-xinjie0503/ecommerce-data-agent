@@ -52,7 +52,7 @@ flowchart LR
 | MySQL Meta | 存储表、字段、指标、字段依赖、主外键等元数据。 |
 | MySQL DW | 存储业务数据，并承担最终 SQL 校验与执行。 |
 | Qdrant | 基于向量召回字段和指标。 |
-| Elasticsearch | 对字段真实取值做 exact-first / fuzzy 检索。 |
+| Elasticsearch | 对字段真实取值做按优先级拆分的 exact 检索。 |
 | LLM | 负责关键词扩展、候选过滤、SQL 生成、SQL 修正等语义任务。 |
 | Trace | 记录每个节点的输入摘要、输出摘要、耗时和错误信息，便于排查。 |
 
@@ -117,19 +117,20 @@ LLM 可能返回 Markdown 代码块、多条 SQL、解释性文本、危险 SQL 
 
 SQL 生成后会先进入 `govern_sql` 节点做执行前治理，再进入 `validate_sql` 节点：Parser 清洗通过后，调用 DW MySQL 做真实语法校验和 EXPLAIN 风险分析；失败时进入 `correct_sql` 尝试修正，修正后的 SQL 会重新回到 `govern_sql`。
 
-### 4.2 字段值幻觉 → exact-first grounding
+### 4.2 字段值幻觉 → 结构化 exact grounding
 
 自然语言问题中经常包含真实业务取值，例如“华北地区”“美的品牌”“食品饮料品类”。LLM 如果只根据语义猜测，可能生成不存在的字段值或错误过滤条件。
 
-项目在 `recall_value` 节点中引入 exact-first grounding：
+项目在 `recall_value` 节点中引入结构化 exact grounding：
 
-1. 从用户 query、关键词和扩展关键词中构造字段值候选。
-2. 优先调用 Elasticsearch 的 exact search 检索真实字段值。
-3. exact 未命中时才退回 fuzzy search。
-4. 如果 query 明确包含地区、品牌、品类等过滤域，会对模糊结果做域过滤。
+1. 共享语义解析器把用户明确指定的取值绑定到地区、品牌、品类等具体字段。
+2. 显式过滤值单独调用 Elasticsearch exact search，避免被隐式关键词挤出结果上限。
+3. 隐式关键词另做一次 exact enrichment，两组结果去重后进入下游上下文。
+4. 只对显式过滤值做按列、规范化后的等价校验，不使用 fuzzy 相似结果判定值存在。
 5. 对用户明确指定的取值逐个校验：
    - 全部未命中：返回 `value_grounding_failed`，不生成 SQL。
    - 部分命中：返回 `partial_value_grounding_failed` warning，并保留已命中的值。
+6. 没有显式过滤值时仍保留隐式 exact enrichment，但跳过存在性校验、字段值 LLM 扩展和 fuzzy 召回。
 
 这个策略避免了“火星地区”这类不存在取值被 LLM 编进 SQL，也能在“对比华北和火星地区”这种部分可用问题中给出明确 warning。
 
@@ -366,7 +367,7 @@ uv run python -m app.scripts.build_meta_knowledge
 完整单元测试入口：
 
 ```bash
-uv run pytest tests
+uv run python -m pytest tests
 ```
 
 ### Agent Eval

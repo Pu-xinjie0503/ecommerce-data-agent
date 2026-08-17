@@ -16,6 +16,7 @@ def build_trace_metrics(steps: list[dict[str, Any]]) -> dict[str, Any]:
         "failed_step_count": sum(step.get("status") == "failed" for step in steps),
         "cache_totals": _aggregate_cache_totals(steps),
         "recall_parallel": _build_recall_parallel_metrics(steps),
+        "grounding": _build_grounding_metrics(steps),
     }
 
 
@@ -80,6 +81,36 @@ def _build_recall_parallel_metrics(steps: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
+def _build_grounding_metrics(steps: list[dict[str, Any]]) -> dict[str, Any]:
+    recall_value_step = next(
+        (step for step in steps if step.get("name") == "recall_value"),
+        None,
+    )
+    if recall_value_step is None:
+        return {
+            "validation_skipped": False,
+            "skip_reason": None,
+            "has_explicit_filter_values": False,
+            "value_keyword_expansion_skipped": False,
+            "value_fuzzy_search_skipped": False,
+            "exact_search": {},
+        }
+
+    output = recall_value_step.get("output_summary") or {}
+    validation_skipped = bool(output.get("grounding_validation_skipped"))
+    return {
+        "validation_skipped": validation_skipped,
+        "skip_reason": output.get("grounding_skip_reason"),
+        "has_explicit_filter_values": not validation_skipped,
+        "value_keyword_expansion_skipped": bool(
+            output.get("value_keyword_expansion_skipped")
+        ),
+        "value_fuzzy_search_skipped": bool(
+            output.get("value_fuzzy_search_skipped")
+        ),
+        "exact_search": output.get("value_exact_search_metrics") or {},
+    }
+
+
 def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value)
-

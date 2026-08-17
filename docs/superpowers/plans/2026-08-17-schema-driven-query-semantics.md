@@ -99,7 +99,7 @@ def test_query_semantics_state_contract() -> None:
 
 - [ ] **Step 2: 运行测试并确认失败**
 
-Run: `uv run pytest tests/test_query_semantics.py::test_query_semantics_state_contract -q`
+Run: `uv run python -m pytest tests/test_query_semantics.py::test_query_semantics_state_contract -q`
 
 Expected: FAIL，提示无法导入 `QuerySemanticsState`。
 
@@ -129,7 +129,7 @@ query_semantics: QuerySemanticsState
 
 - [ ] **Step 4: 运行契约测试**
 
-Run: `uv run pytest tests/test_query_semantics.py::test_query_semantics_state_contract -q`
+Run: `uv run python -m pytest tests/test_query_semantics.py::test_query_semantics_state_contract -q`
 
 Expected: `1 passed`。
 
@@ -175,7 +175,7 @@ def test_find_dimension_mentions(query: str, expected: list[str]) -> None:
 
 - [ ] **Step 2: 运行测试并确认失败**
 
-Run: `uv run pytest tests/test_query_semantics.py::test_find_dimension_mentions -q`
+Run: `uv run python -m pytest tests/test_query_semantics.py::test_find_dimension_mentions -q`
 
 Expected: FAIL，提示模块或函数不存在。
 
@@ -260,7 +260,7 @@ def find_dimension_mentions(query: str) -> list[str]:
 
 - [ ] **Step 5: 运行维度词典测试**
 
-Run: `uv run pytest tests/test_query_semantics.py::test_find_dimension_mentions -q`
+Run: `uv run python -m pytest tests/test_query_semantics.py::test_find_dimension_mentions -q`
 
 Expected: 全部 PASS。
 
@@ -364,7 +364,7 @@ def test_parse_explicit_filter_values(query: str, expected_filters: dict[str, li
 
 - [ ] **Step 3: 运行测试并确认失败**
 
-Run: `uv run pytest tests/test_query_semantics.py -q`
+Run: `uv run python -m pytest tests/test_query_semantics.py -q`
 
 Expected: 新增解析用例 FAIL。
 
@@ -464,7 +464,7 @@ def parse_query_semantics(query: str) -> QuerySemanticsState:
 
 - [ ] **Step 5: 运行解析器测试**
 
-Run: `uv run pytest tests/test_query_semantics.py -q`
+Run: `uv run python -m pytest tests/test_query_semantics.py -q`
 
 Expected: 全部 PASS。
 
@@ -531,7 +531,7 @@ def test_ambiguous_ranking_still_clarifies() -> None:
 
 - [ ] **Step 2: 运行测试并确认至少一条失败**
 
-Run: `uv run pytest tests/test_clarify_query_semantics.py -q`
+Run: `uv run python -m pytest tests/test_clarify_query_semantics.py -q`
 
 Expected: “订单量排名前三”用例 FAIL。
 
@@ -588,7 +588,7 @@ result["query_semantics"] = semantics
 
 - [ ] **Step 4: 运行澄清测试和现有安全/评测单测**
 
-Run: `uv run pytest tests/test_clarify_query_semantics.py tests/test_eval_case_validation.py -q`
+Run: `uv run python -m pytest tests/test_clarify_query_semantics.py tests/test_eval_case_validation.py -q`
 
 Expected: 全部 PASS。
 
@@ -667,7 +667,7 @@ def test_irrelevant_fuzzy_values_do_not_satisfy_grounding() -> None:
 
 - [ ] **Step 3: 运行测试并确认失败**
 
-Run: `uv run pytest tests/test_recall_value_semantics.py -q`
+Run: `uv run python -m pytest tests/test_recall_value_semantics.py -q`
 
 Expected: FAIL，提示辅助函数不存在。
 
@@ -676,8 +676,9 @@ Expected: FAIL，提示辅助函数不存在。
 实现约束：
 
 - 从 `state["query_semantics"]["filter_values"]` 获取按列 ID 绑定的过滤值。
-- `filter_values` 为空时返回空 `retrieved_value_infos`，不调用字段值关键词扩展 LLM，也不调用 ES；这是可测量的延迟与调用量优化。
-- 非空时 exact-first；模糊召回只能提供建议候选，不能因为同域存在任意相似值就判定成功。
+- `filter_values` 为空时仍使用已有关键词做 ES exact enrichment，但跳过存在性校验、字段值关键词扩展 LLM 和 fuzzy 召回；隐式已知值可继续补充 SQL 上下文。
+- `filter_values` 非空时，显式值与隐式关键词必须分两次 exact 查询，显式值优先且不受隐式候选 Top N 截断影响，两组结果去重合并。
+- fuzzy 结果不参与存在性判定；当前实现直接跳过 fuzzy，避免相似但不等价的值造成误放行。
 - 匹配采用可解释的规范化等价：去空格、大小写折叠，以及配置允许的领域后缀归一化；禁止用向量相似度直接判定“值存在”。
 - 全部缺失返回 `value_grounding_failed`；部分缺失保留现有 `partial_value_grounding_failed`。
 - 错误信息继续携带 `missing_values`、`matched_values` 和字段域。
@@ -686,7 +687,7 @@ Expected: FAIL，提示辅助函数不存在。
 
 - [ ] **Step 5: 运行 Grounding 单测**
 
-Run: `uv run pytest tests/test_recall_value_semantics.py -q`
+Run: `uv run python -m pytest tests/test_recall_value_semantics.py -q`
 
 Expected: 全部 PASS。
 
@@ -773,7 +774,7 @@ def test_product_name_is_kept_with_join_keys() -> None:
 
 - [ ] **Step 3: 运行测试并确认失败**
 
-Run: `uv run pytest tests/test_filter_table_semantics.py -q`
+Run: `uv run python -m pytest tests/test_filter_table_semantics.py -q`
 
 Expected: FAIL，现有接口仍依赖 Query 字符串硬编码。
 
@@ -807,7 +808,7 @@ METRIC_REQUIRED_COLUMNS = {
 
 - [ ] **Step 5: 运行字段过滤测试**
 
-Run: `uv run pytest tests/test_filter_table_semantics.py -q`
+Run: `uv run python -m pytest tests/test_filter_table_semantics.py -q`
 
 Expected: 全部 PASS。
 
@@ -843,7 +844,7 @@ def test_trace_summary_contains_query_semantics() -> None:
 
 - [ ] **Step 2: 运行测试并确认失败**
 
-Run: `uv run pytest tests/test_trace_query_semantics.py -q`
+Run: `uv run python -m pytest tests/test_trace_query_semantics.py -q`
 
 Expected: FAIL，摘要中没有 `query_semantics`。
 
@@ -851,9 +852,11 @@ Expected: FAIL，摘要中没有 `query_semantics`。
 
 在 `summarize_payload()` 中显式加入 `query_semantics`，使用现有 `safe_jsonable()` 做深度和长度限制。不得把完整元数据词典写进每条 Trace。
 
+同时记录 Grounding 的可复算证据：`grounding_validation_skipped`、`grounding_skip_reason`、`value_keyword_expansion_skipped`、`value_fuzzy_search_skipped`，以及 `value_exact_search_metrics` 中的显式/隐式候选数和实际调用次数。请求根指标的 `grounding` 聚合必须保留这些字段，后续报告不得根据代码路径估算调用次数。
+
 - [ ] **Step 4: 运行 Trace 测试**
 
-Run: `uv run pytest tests/test_trace_query_semantics.py tests/test_trace_metrics.py tests/test_trace_analysis.py -q`
+Run: `uv run python -m pytest tests/test_trace_query_semantics.py tests/test_trace_metrics.py tests/test_trace_analysis.py -q`
 
 Expected: 全部 PASS。
 
@@ -889,14 +892,14 @@ Expected: 旧的重复语义规则无残留；只允许统一解析模块保留�
 Run:
 
 ```bash
-uv run pytest tests/test_query_semantics.py tests/test_clarify_query_semantics.py tests/test_recall_value_semantics.py tests/test_filter_table_semantics.py tests/test_trace_query_semantics.py -q
+uv run python -m pytest tests/test_query_semantics.py tests/test_clarify_query_semantics.py tests/test_recall_value_semantics.py tests/test_filter_table_semantics.py tests/test_trace_query_semantics.py -q
 ```
 
 Expected: 全部 PASS。
 
 - [ ] **Step 3: 运行全量单元测试**
 
-Run: `uv run pytest tests -q`
+Run: `uv run python -m pytest tests -q`
 
 Expected: 现有 65 条测试与新增测试全部 PASS，无回归。
 
@@ -971,7 +974,7 @@ Grounding 误拦截：15/25 -> candidate
 正常成功查询 P50/P95：baseline -> candidate
 ```
 
-性能结论需额外统计：`filter_values={}` 的请求是否跳过字段值扩展 LLM 和 ES，从 Trace 节点耗时与调用次数给出依据。一次运行的延迟变化只描述为观测值，不宣称具有统计显著性。
+性能结论需额外统计：`filter_values={}` 的请求是否跳过字段值扩展 LLM、fuzzy 召回和存在性校验，以及仍保留的 ES exact enrichment 调用次数；依据必须来自 Trace 节点耗时与 Grounding 指标。一次运行的延迟变化只描述为观测值，不宣称具有统计显著性。
 
 - [ ] **Step 4: 写入最终问题闭环记录**
 
@@ -1021,7 +1024,7 @@ git commit -m "docs: 记录查询语义改进效果"
 - **“商品”歧义：** 当前领域约定“按商品”映射 `product_name`，“商品品类/类目”映射 `category`，通过最长别名匹配解决。
 - **“订单量”歧义：** 当前评测口径约定为订单数 `order_count`；“销量/件数/销售件数”映射 `order_quantity`，必须在单测中固定。
 - **品牌“牌”后缀：** 只在品牌语境或 `X牌商品/X牌一共` 的领域句式中作为品牌值，不把所有以“牌”结尾的词无条件视为品牌。
-- **模糊召回误判：** fuzzy 结果只能用于候选提示，是否存在必须通过规范化后的值等价判断。
+- **模糊召回误判：** 当前 Grounding 链路不使用 fuzzy；值是否存在只通过按字段绑定、规范化后的 exact 等价判断。
 - **元数据缓存：** 测试修改 YAML 后需显式清理 `build_dimension_alias_index.cache_clear()`，避免测试间污染。
 - **Trace 体积：** 只记录本次解析结果与证据，不记录完整词典。
 - **评测污染：** 不根据 `cases_test.yaml` 动态生成规则，不修改隔离测试集；新增表达只进入单元测试或开发集。

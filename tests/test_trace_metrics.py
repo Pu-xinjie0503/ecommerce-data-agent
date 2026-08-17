@@ -72,6 +72,49 @@ def test_trace_manager_persists_experiment_and_metrics():
     assert manager.record["metrics"]["recall_parallel"]["available"] is False
 
 
+def test_build_trace_metrics_records_grounding_validation_shortcut():
+    """Grounding 校验和 LLM 扩展跳过状态应提升为请求级指标。"""
+
+    step = _step(
+        "recall_value",
+        "2026-08-17T10:00:00.000",
+        "2026-08-17T10:00:00.001",
+        1,
+    )
+    step["output_summary"].update(
+        {
+            "grounding_validation_skipped": True,
+            "value_keyword_expansion_skipped": True,
+            "value_fuzzy_search_skipped": True,
+            "grounding_skip_reason": "no_explicit_filter_values",
+            "value_exact_search_metrics": {
+                "explicit_candidate_count": 0,
+                "implicit_candidate_count": 3,
+                "explicit_call_count": 0,
+                "implicit_call_count": 1,
+                "total_call_count": 1,
+            },
+        }
+    )
+
+    metrics = build_trace_metrics([step])
+
+    assert metrics["grounding"] == {
+        "validation_skipped": True,
+        "skip_reason": "no_explicit_filter_values",
+        "has_explicit_filter_values": False,
+        "value_keyword_expansion_skipped": True,
+        "value_fuzzy_search_skipped": True,
+        "exact_search": {
+            "explicit_candidate_count": 0,
+            "implicit_candidate_count": 3,
+            "explicit_call_count": 0,
+            "implicit_call_count": 1,
+            "total_call_count": 1,
+        },
+    }
+
+
 def _step(name, start_time, end_time, duration_ms, cache_stats=None):
     return {
         "name": name,
@@ -87,4 +130,3 @@ def _step(name, start_time, end_time, duration_ms, cache_stats=None):
         "recoverable": None,
         "suggested_action": None,
     }
-

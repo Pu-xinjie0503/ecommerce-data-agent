@@ -1,21 +1,38 @@
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
-from app.agent.state import ColumnInfoState, DataAgentState, MetricInfoState, TableInfoState
+from app.agent.query_semantics import parse_query_semantics
+from app.agent.state import (
+    ColumnInfoState,
+    DataAgentState,
+    MetricInfoState,
+    QuerySemanticsState,
+    TableInfoState,
+)
 from app.core.log import logger
 from app.entities.value_info import ValueInfo
 
 
-GROUP_BY_TRIGGERS = ["各", "按", "每个", "分别", "分组"]
-TIME_KEYWORDS = ["年", "月", "季度", "第一季度", "第二季度", "第三季度", "第四季度", "Q1", "Q2", "Q3", "Q4"]
-REGION_KEYWORDS = ["大区", "地区", "省份", "华北", "华南", "华东", "华中", "东北", "西北", "西南"]
-PRODUCT_KEYWORDS = ["品牌", "商品", "品类", "销量"]
-CUSTOMER_KEYWORDS = ["会员等级", "会员", "客户"]
+METRIC_REQUIRED_COLUMNS: dict[str, set[str]] = {
+    "gmv": {"fact_order.order_amount"},
+    "order_quantity": {"fact_order.order_quantity"},
+    "order_count": {"fact_order.order_id"},
+    "aov": {"fact_order.order_amount", "fact_order.order_id"},
+}
 
 
-def has_any(query: str, keywords: list[str]) -> bool:
-    query_lower = query.lower()
-    return any(keyword.lower() in query_lower for keyword in keywords)
+def collect_time_columns(query_semantics: QuerySemanticsState) -> set[str]:
+    """返回时间过滤所需的日期维度列。"""
+
+    if not query_semantics["time_expressions"]:
+        return set()
+
+    mentioned_date_columns = {
+        column_id
+        for column_id in query_semantics["dimension_columns"]
+        if column_id.startswith("dim_date.")
+    }
+    return {"dim_date.date_id", *mentioned_date_columns}
 
 
 def parse_column_id(column_id: str) -> tuple[str, str] | None:
@@ -24,24 +41,6 @@ def parse_column_id(column_id: str) -> tuple[str, str] | None:
 
     table_name, column_name = column_id.rsplit(".", 1)
     return table_name, column_name
-
-
-def detect_group_by_columns(query: str) -> set[str]:
-    if not has_any(query, GROUP_BY_TRIGGERS):
-        return set()
-
-    group_by_columns: set[str] = set()
-
-    if "品类" in query or "商品品类" in query:
-        group_by_columns.add("dim_product.category")
-
-    if "大区" in query or "地区" in query:
-        group_by_columns.add("dim_region.region_name")
-
-    if "会员等级" in query:
-        group_by_columns.add("dim_customer.member_level")
-
-    return group_by_columns
 
 
 def collect_metric_columns(metric_infos: list[MetricInfoState]) -> set[str]:
@@ -62,50 +61,28 @@ def collect_value_columns(retrieved_value_infos: list[ValueInfo]) -> set[str]:
 
 
 def collect_required_columns(
-    query: str,
+    query_semantics: QuerySemanticsState,
     metric_infos: list[MetricInfoState],
     retrieved_value_infos: list[ValueInfo],
 ) -> set[str]:
     required_columns = collect_metric_columns(metric_infos)
     required_columns.update(collect_value_columns(retrieved_value_infos))
-    required_columns.update(detect_group_by_columns(query))
-
-    if has_any(query, TIME_KEYWORDS):
-        required_columns.update(
-            {
-                "dim_date.date_id",
-                "dim_date.year",
-                "dim_date.quarter",
-                "dim_date.month",
-                "dim_date.day",
-            }
-        )
-
-    if "销量" in query:
-        required_columns.add("fact_order.order_quantity")
+    required_columns.update(query_semantics["group_by_columns"])
+    required_columns.update(query_semantics["filter_values"].keys())
+    required_columns.update(collect_time_columns(query_semantics))
+    for metric_term in query_semantics["metric_terms"]:
+        required_columns.update(METRIC_REQUIRED_COLUMNS.get(metric_term, set()))
 
     return required_columns
 
 
-def collect_required_tables(query: str, required_columns: set[str]) -> set[str]:
+def collect_required_tables(required_columns: set[str]) -> set[str]:
     required_tables = {"fact_order"}
 
     for column_id in required_columns:
         parsed_column_id = parse_column_id(column_id)
         if parsed_column_id:
             required_tables.add(parsed_column_id[0])
-
-    if has_any(query, TIME_KEYWORDS):
-        required_tables.add("dim_date")
-
-    if has_any(query, PRODUCT_KEYWORDS):
-        required_tables.add("dim_product")
-
-    if has_any(query, REGION_KEYWORDS):
-        required_tables.add("dim_region")
-
-    if has_any(query, CUSTOMER_KEYWORDS):
-        required_tables.add("dim_customer")
 
     return required_tables
 
@@ -142,23 +119,37 @@ def filter_table_columns(table_info: TableInfoState, required_columns: set[str])
     )
 
 
-def filter_tables_by_rules(
-    query: str,
+def filter_tables_by_semantics(
     table_infos: list[TableInfoState],
+    query_semantics: QuerySemanticsState,
     metric_infos: list[MetricInfoState],
     retrieved_value_infos: list[ValueInfo],
 ) -> list[TableInfoState]:
     if not table_infos:
         return []
 
-    required_columns = collect_required_columns(query, metric_infos, retrieved_value_infos)
-    required_tables = collect_required_tables(query, required_columns)
+    required_columns = collect_required_columns(
+        query_semantics,
+        metric_infos,
+        retrieved_value_infos,
+    )
+    required_tables = collect_required_tables(required_columns)
+
+    available_columns = {
+        f"{table_info['name']}.{column_info['name']}"
+        for table_info in table_infos
+        for column_info in table_info["columns"]
+    }
+    missing_columns = required_columns - available_columns
+    if missing_columns:
+        logger.warning(f"语义依赖字段未进入候选上下文，保留过滤前表信息: {sorted(missing_columns)}")
+        return table_infos
 
     filtered_table_infos: list[TableInfoState] = []
 
     for table_info in table_infos:
         table_name = table_info["name"]
-        if table_name not in required_tables and table_info["role"] != "fact":
+        if table_name not in required_tables:
             continue
 
         filtered_table_info = filter_table_columns(table_info, required_columns)
@@ -186,15 +177,16 @@ async def filter_table(
 
     try:
         query = state["query"]
+        query_semantics = state.get("query_semantics") or parse_query_semantics(query)
         table_infos = state.get("table_infos", [])
         metric_infos = state.get("metric_infos", [])
         retrieved_value_infos = state.get("retrieved_value_infos", [])
 
         logger.info(f"过滤前表信息: {[table_info['name'] for table_info in table_infos]}")
 
-        filtered_table_infos = filter_tables_by_rules(
-            query=query,
+        filtered_table_infos = filter_tables_by_semantics(
             table_infos=table_infos,
+            query_semantics=query_semantics,
             metric_infos=metric_infos,
             retrieved_value_infos=retrieved_value_infos,
         )

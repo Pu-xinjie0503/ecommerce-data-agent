@@ -46,13 +46,13 @@ tables:
       - name: gender
         role: dimension
         description: 客户性别。
-        alias: [性别]
+        alias: [性别, 男女, 女性客户, 男性客户, 女客户, 男客户]
         sync: true
 
       - name: member_level
         role: dimension
         description: 客户会员等级。
-        alias: [会员等级, 用户等级]
+        alias: [会员等级, 用户等级, 会员层级, 用户层级, 会员]
         sync: true
 
   - name: dim_product
@@ -68,13 +68,13 @@ tables:
       - name: product_name
         role: dimension
         description: 商品名称。
-        alias: [商品名称, 产品名称]
+        alias: [商品名称, 产品名称, 商品, 产品, 单品]
         sync: true
 
       - name: category
         role: dimension
         description: 商品所属品类。
-        alias: [商品类别, 品类, 分类]
+        alias: [商品类别, 商品品类, 品类, 分类, 类目]
         sync: true
 
       - name: brand
@@ -154,7 +154,7 @@ tables:
       - name: order_quantity
         role: measure
         description: 订单中商品的购买数量。
-        alias: [销量, 购买数量, 件数]
+        alias: [销量, 购买数量, 件数, 销售件数]
         sync: false
 
       - name: order_amount
