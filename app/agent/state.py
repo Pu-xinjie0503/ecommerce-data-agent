@@ -56,6 +56,19 @@ class DBInfoState(TypedDict):
     version: str
 
 
+class QuerySemanticsState(TypedDict):
+    """当前电商领域内的结构化查询语义。"""
+
+    dimension_columns: list[str]
+    group_by_columns: list[str]
+    filter_values: dict[str, list[str]]
+    metric_terms: list[str]
+    time_expressions: list[str]
+    order_direction: Literal["asc", "desc"] | None
+    limit: int | None
+    parse_evidence: list[str]
+
+
 class DataAgentState(TypedDict, total=False):
     """一次问数链路中的核心状态"""
 
@@ -77,6 +90,9 @@ class DataAgentState(TypedDict, total=False):
 
     # 关键词抽取结果
     keywords: list[str]
+
+    # 当前领域内的结构化查询语义
+    query_semantics: QuerySemanticsState
 
     # 三路召回结果
     retrieved_column_infos: list[ColumnInfo]
@@ -118,6 +134,11 @@ class DataAgentState(TypedDict, total=False):
     dependency_warnings: list[str]
     missing_values: list[str]
     matched_values: list[str]
+    grounding_validation_skipped: bool
+    value_keyword_expansion_skipped: bool
+    value_fuzzy_search_skipped: bool
+    value_exact_search_metrics: dict[str, int]
+    grounding_skip_reason: str | None
 
     # SQL 执行计划观测
     sql_explain: list[dict]

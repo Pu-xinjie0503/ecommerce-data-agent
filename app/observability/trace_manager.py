@@ -1,14 +1,22 @@
 """Agent 结构化 Trace 管理器。"""
 
+from __future__ import annotations
+
 import json
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
+try:
+    from loguru import logger
+except ImportError:  # pragma: no cover - 完整运行环境会安装 loguru
+    import logging
+
+    logger = logging.getLogger(__name__)
 
 from app.observability.trace_schema import TraceRecord, TraceStep, TraceStatus
+from app.observability.trace_metrics import build_trace_metrics
 
 MAX_STRING_LENGTH = 500
 MAX_LIST_ITEMS = 5
@@ -20,7 +28,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class TraceManager:
     """记录一次 Agent 请求的结构化执行轨迹。"""
 
-    def __init__(self, request_id: str, query: str, root_dir: str | Path | None = None):
+    def __init__(
+        self,
+        request_id: str,
+        query: str,
+        root_dir: str | Path | None = None,
+        experiment: dict[str, Any] | None = None,
+    ):
         self.request_id = request_id
         self.query = query
         self.root_dir = Path(root_dir) if root_dir else PROJECT_ROOT / "traces"
@@ -35,6 +49,8 @@ class TraceManager:
             "end_time": None,
             "duration_ms": None,
             "trace_path": str(self.trace_path),
+            "experiment": dict(experiment or {}),
+            "metrics": {},
             "steps": [],
         }
         self._running_steps: dict[str, tuple[TraceStep, float]] = {}
@@ -82,6 +98,7 @@ class TraceManager:
         self.record["status"] = status
         self.record["end_time"] = _now_iso()
         self.record["duration_ms"] = round((time.perf_counter() - self.started_at) * 1000, 2)
+        self.record["metrics"] = build_trace_metrics(self.record["steps"])
 
     def save(self) -> str:
         try:
@@ -110,6 +127,27 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
 
     if "keywords" in payload:
         summary["keywords"] = safe_jsonable(payload.get("keywords"))
+
+    if "query_semantics" in payload:
+        query_semantics = payload.get("query_semantics")
+        if isinstance(query_semantics, dict):
+            semantic_keys = (
+                "dimension_columns",
+                "group_by_columns",
+                "filter_values",
+                "metric_terms",
+                "time_expressions",
+                "order_direction",
+                "limit",
+                "parse_evidence",
+            )
+            summary["query_semantics"] = {
+                key: safe_jsonable(query_semantics.get(key))
+                for key in semantic_keys
+                if key in query_semantics
+            }
+        else:
+            summary["query_semantics"] = safe_jsonable(query_semantics)
 
     if "retrieved_value_infos" in payload:
         values = payload.get("retrieved_value_infos") or []
@@ -167,9 +205,18 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
         "warning_message",
         "missing_values",
         "matched_values",
+        "grounding_validation_skipped",
+        "value_keyword_expansion_skipped",
+        "value_fuzzy_search_skipped",
+        "grounding_skip_reason",
     ):
         if key in payload:
             summary[key] = safe_jsonable(payload.get(key))
+
+    if "value_exact_search_metrics" in payload:
+        summary["value_exact_search_metrics"] = safe_jsonable(
+            payload.get("value_exact_search_metrics")
+        )
 
     if "cache_stats" in payload:
         cache_stats = payload.get("cache_stats")

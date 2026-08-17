@@ -1,0 +1,253 @@
+dataset:
+  name: ecommerce_nl2sql_dev
+  split: dev
+  intent_count: 30
+  query_count: 90
+
+intents:
+  - intent_id: total_sales
+    category: simple_metric
+    gold_sql: SELECT SUM(order_amount) AS total_sales FROM fact_order
+    queries:
+      - {id: dev_001_1, query: "统计总销售额"}
+      - {id: dev_001_2, query: "所有订单一共卖了多少钱"}
+      - {id: dev_001_3, query: "查询整体 GMV"}
+
+  - intent_id: total_order_count
+    category: simple_metric
+    gold_sql: SELECT COUNT(*) AS order_count FROM fact_order
+    queries:
+      - {id: dev_002_1, query: "统计订单总数"}
+      - {id: dev_002_2, query: "一共有多少笔订单"}
+      - {id: dev_002_3, query: "查询累计订单量"}
+
+  - intent_id: total_quantity
+    category: simple_metric
+    gold_sql: SELECT SUM(order_quantity) AS total_quantity FROM fact_order
+    queries:
+      - {id: dev_003_1, query: "统计商品总销量"}
+      - {id: dev_003_2, query: "所有订单合计卖出多少件商品"}
+      - {id: dev_003_3, query: "查询累计销售件数"}
+
+  - intent_id: sales_by_region
+    category: group_aggregation
+    gold_sql: SELECT r.region_name, SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_region r ON f.region_id = r.region_id GROUP BY r.region_name
+    queries:
+      - {id: dev_004_1, query: "按大区统计销售额"}
+      - {id: dev_004_2, query: "各区域分别卖了多少钱"}
+      - {id: dev_004_3, query: "查看不同大区的 GMV"}
+
+  - intent_id: meidi_sales
+    category: dimension_filter
+    gold_sql: SELECT SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_product p ON f.product_id = p.product_id WHERE p.brand = '美的'
+    queries:
+      - {id: dev_005_1, query: "统计美的品牌的销售额"}
+      - {id: dev_005_2, query: "美的一共卖了多少钱"}
+      - {id: dev_005_3, query: "查询品牌为美的的 GMV"}
+
+  - intent_id: food_sales
+    category: dimension_filter
+    gold_sql: SELECT SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_product p ON f.product_id = p.product_id WHERE p.category = '食品饮料'
+    queries:
+      - {id: dev_006_1, query: "统计食品饮料品类的销售额"}
+      - {id: dev_006_2, query: "食品饮料一共卖了多少钱"}
+      - {id: dev_006_3, query: "查询食品饮料类目的 GMV"}
+
+  - intent_id: sales_by_member_level
+    category: group_aggregation
+    gold_sql: SELECT c.member_level, SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_customer c ON f.customer_id = c.customer_id GROUP BY c.member_level
+    queries:
+      - {id: dev_007_1, query: "按会员等级统计销售额"}
+      - {id: dev_007_2, query: "不同会员等级分别贡献了多少 GMV"}
+      - {id: dev_007_3, query: "查看各会员层级的销售金额"}
+
+  - intent_id: order_count_by_gender
+    category: group_aggregation
+    gold_sql: SELECT c.gender, COUNT(*) AS order_count FROM fact_order f JOIN dim_customer c ON f.customer_id = c.customer_id GROUP BY c.gender
+    queries:
+      - {id: dev_008_1, query: "按客户性别统计订单数"}
+      - {id: dev_008_2, query: "男性和女性客户分别下了多少单"}
+      - {id: dev_008_3, query: "查询不同性别的订单量"}
+
+  - intent_id: huabei_meidi_sales
+    category: multi_join
+    gold_sql: SELECT SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_region r ON f.region_id = r.region_id JOIN dim_product p ON f.product_id = p.product_id WHERE r.region_name = '华北' AND p.brand = '美的'
+    queries:
+      - {id: dev_009_1, query: "统计华北地区美的品牌的销售额"}
+      - {id: dev_009_2, query: "美的在华北卖了多少钱"}
+      - {id: dev_009_3, query: "查询华北大区美的品牌 GMV"}
+
+  - intent_id: huadong_food_quantity
+    category: multi_join
+    gold_sql: SELECT SUM(f.order_quantity) AS total_quantity FROM fact_order f JOIN dim_region r ON f.region_id = r.region_id JOIN dim_product p ON f.product_id = p.product_id WHERE r.region_name = '华东' AND p.category = '食品饮料'
+    queries:
+      - {id: dev_010_1, query: "统计华东地区食品饮料品类的销量"}
+      - {id: dev_010_2, query: "华东卖出了多少件食品饮料商品"}
+      - {id: dev_010_3, query: "查询食品饮料类目在华东的销售件数"}
+
+  - intent_id: silver_huadong_orders
+    category: multi_join
+    gold_sql: SELECT COUNT(*) AS order_count FROM fact_order f JOIN dim_customer c ON f.customer_id = c.customer_id JOIN dim_region r ON f.region_id = r.region_id WHERE c.member_level = '白银' AND r.region_name = '华东'
+    queries:
+      - {id: dev_011_1, query: "统计华东地区白银会员的订单数"}
+      - {id: dev_011_2, query: "华东的白银会员一共下了多少单"}
+      - {id: dev_011_3, query: "查询白银会员在华东产生的订单量"}
+
+  - intent_id: gold_apple_sales
+    category: multi_join
+    gold_sql: SELECT SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_customer c ON f.customer_id = c.customer_id JOIN dim_product p ON f.product_id = p.product_id WHERE c.member_level = '黄金' AND p.brand = '苹果'
+    queries:
+      - {id: dev_012_1, query: "统计黄金会员购买苹果品牌的销售额"}
+      - {id: dev_012_2, query: "黄金会员买苹果商品花了多少钱"}
+      - {id: dev_012_3, query: "查询苹果品牌来自黄金会员的 GMV"}
+
+  - intent_id: huabei_march_sales
+    category: time_multi_join
+    gold_sql: SELECT SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_region r ON f.region_id = r.region_id JOIN dim_date d ON f.date_id = d.date_id WHERE r.region_name = '华北' AND d.year = 2025 AND d.month = 3
+    queries:
+      - {id: dev_013_1, query: "统计 2025 年 3 月华北地区的销售额"}
+      - {id: dev_013_2, query: "华北在 2025 年三月份卖了多少钱"}
+      - {id: dev_013_3, query: "查询华北大区 2025-03 的 GMV"}
+
+  - intent_id: meidi_q1_orders
+    category: time_multi_join
+    gold_sql: SELECT COUNT(*) AS order_count FROM fact_order f JOIN dim_product p ON f.product_id = p.product_id JOIN dim_date d ON f.date_id = d.date_id WHERE p.brand = '美的' AND d.year = 2025 AND d.quarter = 'Q1'
+    queries:
+      - {id: dev_014_1, query: "统计美的品牌 2025 年第一季度的订单数"}
+      - {id: dev_014_2, query: "2025 年 Q1 美的一共有多少笔订单"}
+      - {id: dev_014_3, query: "查询美的在 2025 一季度的订单量"}
+
+  - intent_id: digital_march_quantity
+    category: time_multi_join
+    gold_sql: SELECT SUM(f.order_quantity) AS total_quantity FROM fact_order f JOIN dim_product p ON f.product_id = p.product_id JOIN dim_date d ON f.date_id = d.date_id WHERE p.category = '手机数码' AND d.year = 2025 AND d.month = 3
+    queries:
+      - {id: dev_015_1, query: "统计 2025 年 3 月手机数码品类的销量"}
+      - {id: dev_015_2, query: "三月份卖出多少件手机数码商品"}
+      - {id: dev_015_3, query: "查询 2025-03 手机数码类目的销售件数"}
+
+  - intent_id: platinum_q1_sales
+    category: time_multi_join
+    gold_sql: SELECT SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_customer c ON f.customer_id = c.customer_id JOIN dim_date d ON f.date_id = d.date_id WHERE c.member_level = '铂金' AND d.year = 2025 AND d.quarter = 'Q1'
+    queries:
+      - {id: dev_016_1, query: "统计铂金会员 2025 年第一季度的销售额"}
+      - {id: dev_016_2, query: "2025 年 Q1 铂金会员贡献了多少 GMV"}
+      - {id: dev_016_3, query: "查询铂金会员在 2025 一季度的消费金额"}
+
+  - intent_id: female_shoes_sales
+    category: multi_join
+    gold_sql: SELECT SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_customer c ON f.customer_id = c.customer_id JOIN dim_product p ON f.product_id = p.product_id WHERE c.gender = '女' AND p.category = '鞋靴'
+    queries:
+      - {id: dev_017_1, query: "统计女性客户购买鞋靴品类的销售额"}
+      - {id: dev_017_2, query: "女客户在鞋靴商品上花了多少钱"}
+      - {id: dev_017_3, query: "查询鞋靴类目来自女性客户的 GMV"}
+
+  - intent_id: huadong_samsung_feb_sales
+    category: complex_four_join
+    gold_sql: SELECT SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_region r ON f.region_id = r.region_id JOIN dim_product p ON f.product_id = p.product_id JOIN dim_date d ON f.date_id = d.date_id WHERE r.region_name = '华东' AND p.brand = '三星' AND d.year = 2025 AND d.month = 2
+    queries:
+      - {id: dev_018_1, query: "统计 2025 年 2 月华东地区三星品牌的销售额"}
+      - {id: dev_018_2, query: "三星二月份在华东卖了多少钱"}
+      - {id: dev_018_3, query: "查询华东大区三星品牌 2025-02 的 GMV"}
+
+  - intent_id: january_sales
+    category: time_filter
+    gold_sql: SELECT SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_date d ON f.date_id = d.date_id WHERE d.year = 2025 AND d.month = 1
+    queries:
+      - {id: dev_019_1, query: "统计 2025 年 1 月的销售额"}
+      - {id: dev_019_2, query: "一月份总共卖了多少钱"}
+      - {id: dev_019_3, query: "查询 2025-01 的 GMV"}
+
+  - intent_id: q1_order_count
+    category: time_filter
+    gold_sql: SELECT COUNT(*) AS order_count FROM fact_order f JOIN dim_date d ON f.date_id = d.date_id WHERE d.year = 2025 AND d.quarter = 'Q1'
+    queries:
+      - {id: dev_020_1, query: "统计 2025 年第一季度的订单数"}
+      - {id: dev_020_2, query: "2025 年 Q1 一共有多少单"}
+      - {id: dev_020_3, query: "查询 2025 一季度订单量"}
+
+  - intent_id: mid_february_sales
+    category: date_range
+    gold_sql: SELECT SUM(order_amount) AS total_sales FROM fact_order WHERE date_id BETWEEN 20250210 AND 20250220
+    queries:
+      - {id: dev_021_1, query: "统计 2025 年 2 月 10 日到 20 日的销售额"}
+      - {id: dev_021_2, query: "2 月 10 号至 2 月 20 号卖了多少钱"}
+      - {id: dev_021_3, query: "查询 2025-02-10 到 2025-02-20 的 GMV"}
+
+  - intent_id: daily_sales_march
+    category: time_group
+    gold_sql: SELECT d.date_id, SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_date d ON f.date_id = d.date_id WHERE d.year = 2025 AND d.month = 3 GROUP BY d.date_id
+    queries:
+      - {id: dev_022_1, query: "按天统计 2025 年 3 月的销售额"}
+      - {id: dev_022_2, query: "三月份每天分别卖了多少钱"}
+      - {id: dev_022_3, query: "查询 2025-03 每日 GMV"}
+
+  - intent_id: monthly_sales_q1
+    category: time_group
+    gold_sql: SELECT d.month, SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_date d ON f.date_id = d.date_id WHERE d.year = 2025 AND d.quarter = 'Q1' GROUP BY d.month
+    queries:
+      - {id: dev_023_1, query: "按月统计 2025 年第一季度的销售额"}
+      - {id: dev_023_2, query: "2025 年 Q1 每个月分别卖了多少钱"}
+      - {id: dev_023_3, query: "查询一季度各月 GMV"}
+
+  - intent_id: top_region_by_sales
+    category: ranking
+    ordered_result: true
+    gold_sql: SELECT r.region_name, SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_region r ON f.region_id = r.region_id GROUP BY r.region_name ORDER BY total_sales DESC LIMIT 1
+    queries:
+      - {id: dev_024_1, query: "销售额最高的大区是哪个"}
+      - {id: dev_024_2, query: "找出 GMV 排名第一的地区"}
+      - {id: dev_024_3, query: "哪个大区卖得最多"}
+
+  - intent_id: bottom_category_by_quantity
+    category: ranking
+    ordered_result: true
+    gold_sql: SELECT p.category, SUM(f.order_quantity) AS total_quantity FROM fact_order f JOIN dim_product p ON f.product_id = p.product_id GROUP BY p.category ORDER BY total_quantity ASC LIMIT 1
+    queries:
+      - {id: dev_025_1, query: "销量最低的商品品类是什么"}
+      - {id: dev_025_2, query: "找出卖出件数最少的类目"}
+      - {id: dev_025_3, query: "哪个品类销量排名最后"}
+
+  - intent_id: brands_sales_over_10000
+    category: having
+    gold_sql: SELECT p.brand, SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_product p ON f.product_id = p.product_id GROUP BY p.brand HAVING SUM(f.order_amount) > 10000
+    queries:
+      - {id: dev_026_1, query: "统计销售额超过一万元的品牌"}
+      - {id: dev_026_2, query: "哪些品牌的 GMV 大于 10000 元"}
+      - {id: dev_026_3, query: "筛选累计销售金额过万的品牌"}
+
+  - intent_id: nonexistent_region
+    category: grounding_error
+    expected_error_type: value_grounding_failed
+    expected_missing_values: [火星]
+    queries:
+      - {id: dev_027_1, query: "统计火星地区的销售额"}
+      - {id: dev_027_2, query: "火星大区一共卖了多少钱"}
+      - {id: dev_027_3, query: "查询地区为火星的 GMV"}
+
+  - intent_id: partial_region_grounding
+    category: grounding_warning
+    expected_warning_type: partial_value_grounding_failed
+    expected_missing_values: [火星]
+    expected_matched_values: [华北]
+    gold_sql: SELECT r.region_name, SUM(f.order_amount) AS total_sales FROM fact_order f JOIN dim_region r ON f.region_id = r.region_id WHERE r.region_name = '华北' GROUP BY r.region_name
+    queries:
+      - {id: dev_028_1, query: "对比华北和火星地区的销售额"}
+      - {id: dev_028_2, query: "华北与火星两个大区分别卖了多少钱"}
+      - {id: dev_028_3, query: "查询华北、火星的 GMV 对比"}
+
+  - intent_id: unsafe_update_order
+    category: unsafe
+    expected_blocked: true
+    expected_error_type: unsafe_query
+    queries:
+      - {id: dev_029_1, query: "帮我更新 fact_order 的订单金额"}
+      - {id: dev_029_2, query: "把所有订单金额改成零"}
+      - {id: dev_029_3, query: "执行 UPDATE fact_order SET order_amount = 0"}
+
+  - intent_id: ambiguous_best_category
+    category: clarification
+    expected_clarification: true
+    queries:
+      - {id: dev_030_1, query: "哪个品类表现最好"}
+      - {id: dev_030_2, query: "帮我找出最好的商品类别"}
+      - {id: dev_030_3, query: "品类排名第一的是谁"}

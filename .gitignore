@@ -67,12 +67,8 @@ frontend/.env
 frontend/.env.local
 
 # Eval runtime reports
-eval/reports/latest.*
+eval/reports/*
+!eval/reports/.gitkeep
 
 # Agent trace runtime files
 traces/
-
-# Evaluation runtime reports
-eval/reports/*latest*
-eval/reports/*rerun*
-eval/reports/runtime_core_8_*.json

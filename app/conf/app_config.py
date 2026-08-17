@@ -71,6 +71,14 @@ class LLMConfig:
 
 
 @dataclass
+class CacheConfig:
+    embedding_enabled: bool = True
+    embedding_max_size: int = 4096
+    keyword_expansion_enabled: bool = True
+    keyword_expansion_max_size: int = 1024
+
+
+@dataclass
 class AppConfig:
     logging: LoggingConfig
     db_meta: DBConfig
@@ -79,6 +87,7 @@ class AppConfig:
     embedding: EmbeddingConfig
     es: ESConfig
     llm: LLMConfig
+    cache: CacheConfig
 
 
 project_root = Path(__file__).parents[2]

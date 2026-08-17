@@ -1,15 +1,13 @@
+from __future__ import annotations
+
 import json
 from collections import OrderedDict
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Iterator, Literal
+from typing import Any, Iterator, Literal
 
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.prompts import PromptTemplate
-
-from app.agent.llm import ainvoke_llm_chain, llm
-from app.prompt.prompt_loader import load_prompt
+from app.conf.app_config import app_config
 
 RecallType = Literal["column", "metric", "value"]
 
@@ -27,15 +25,35 @@ class KeywordExpansionCacheStats:
     keyword_expand_cache_miss_metric: int = 0
     keyword_expand_cache_hit_value: int = 0
     keyword_expand_cache_miss_value: int = 0
+    keyword_expand_cache_bypass: int = 0
 
-    def to_dict(self, cache_size: int | None = None) -> dict[str, int]:
+    def to_dict(
+        self,
+        cache_size: int | None = None,
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        hits = (
+            self.keyword_expand_cache_hit_column
+            + self.keyword_expand_cache_hit_metric
+            + self.keyword_expand_cache_hit_value
+        )
+        misses = (
+            self.keyword_expand_cache_miss_column
+            + self.keyword_expand_cache_miss_metric
+            + self.keyword_expand_cache_miss_value
+        )
         data = {
+            "keyword_expand_cache_enabled": enabled,
             "keyword_expand_cache_hit_column": self.keyword_expand_cache_hit_column,
             "keyword_expand_cache_miss_column": self.keyword_expand_cache_miss_column,
             "keyword_expand_cache_hit_metric": self.keyword_expand_cache_hit_metric,
             "keyword_expand_cache_miss_metric": self.keyword_expand_cache_miss_metric,
             "keyword_expand_cache_hit_value": self.keyword_expand_cache_hit_value,
             "keyword_expand_cache_miss_value": self.keyword_expand_cache_miss_value,
+            "keyword_expand_cache_bypass": self.keyword_expand_cache_bypass,
+            "keyword_expand_cache_hit_rate": (
+                round(hits / (hits + misses) * 100, 2) if hits + misses else 0.0
+            ),
         }
         if cache_size is not None:
             data["keyword_expand_cache_size"] = cache_size
@@ -44,6 +62,8 @@ class KeywordExpansionCacheStats:
 
 _cache: OrderedDict[str, list[str]] = OrderedDict()
 _stats = KeywordExpansionCacheStats()
+_cache_enabled = app_config.cache.keyword_expansion_enabled
+_cache_max_size = app_config.cache.keyword_expansion_max_size
 _keyword_step_stats: ContextVar[KeywordExpansionCacheStats | None] = ContextVar(
     "keyword_step_stats",
     default=None,
@@ -79,10 +99,10 @@ def trace_keyword_cache_stats() -> Iterator[KeywordExpansionCacheStats]:
         _keyword_step_stats.reset(token)
 
 
-def get_cache_stats() -> dict[str, int]:
+def get_cache_stats() -> dict[str, Any]:
     """返回关键词扩展缓存累计统计。"""
 
-    return _stats.to_dict(cache_size=len(_cache))
+    return _stats.to_dict(cache_size=len(_cache), enabled=_cache_enabled)
 
 
 def reset_cache_stats() -> None:
@@ -92,13 +112,30 @@ def reset_cache_stats() -> None:
     _stats = KeywordExpansionCacheStats()
 
 
-def clear_cache() -> None:
-    """清空关键词扩展缓存内容。"""
+def clear_cache(*, reset_stats: bool = False) -> None:
+    """清空关键词扩展缓存内容，并可同时重置累计统计。"""
 
     _cache.clear()
+    if reset_stats:
+        reset_cache_stats()
+
+
+def set_cache_enabled(enabled: bool) -> None:
+    """切换关键词扩展缓存读写。"""
+
+    global _cache_enabled
+    _cache_enabled = bool(enabled)
+
+
+def is_cache_enabled() -> bool:
+    """返回关键词扩展缓存是否启用。"""
+
+    return _cache_enabled
 
 
 def _get_cached_keywords(cache_key: str) -> list[str] | None:
+    if not _cache_enabled:
+        return None
     cached = _cache.get(cache_key)
     if cached is None:
         return None
@@ -107,9 +144,11 @@ def _get_cached_keywords(cache_key: str) -> list[str] | None:
 
 
 def _set_cached_keywords(cache_key: str, expanded_keywords: list[str]) -> None:
+    if not _cache_enabled:
+        return
     _cache[cache_key] = list(expanded_keywords)
     _cache.move_to_end(cache_key)
-    if len(_cache) > KEYWORD_EXPANSION_CACHE_MAX_SIZE:
+    if len(_cache) > _cache_max_size:
         _cache.popitem(last=False)
 
 
@@ -122,13 +161,21 @@ async def expand_keywords_with_cache(
 ):
     """带进程内缓存的关键词扩展，保持原 LLM 扩展结果结构不变。"""
 
-    cache_key = build_keyword_expand_cache_key(recall_type, query, keywords)
-    cached = _get_cached_keywords(cache_key)
-    if cached is not None:
-        _record_hit(recall_type)
-        return list(cached)
+    from langchain_core.output_parsers import JsonOutputParser
+    from langchain_core.prompts import PromptTemplate
 
-    _record_miss(recall_type)
+    from app.agent.llm import ainvoke_llm_chain, llm
+    from app.prompt.prompt_loader import load_prompt
+
+    cache_key = build_keyword_expand_cache_key(recall_type, query, keywords)
+    if _cache_enabled:
+        cached = _get_cached_keywords(cache_key)
+        if cached is not None:
+            _record_hit(recall_type)
+            return list(cached)
+        _record_miss(recall_type)
+    else:
+        _record_bypass()
     prompt = PromptTemplate(
         template=load_prompt(prompt_name),
         input_variables=["query"],
@@ -156,6 +203,13 @@ def _record_miss(recall_type: RecallType) -> None:
     step_stats = _keyword_step_stats.get()
     if step_stats is not None:
         _increment(recall_type, hit=False, stats=step_stats)
+
+
+def _record_bypass() -> None:
+    _stats.keyword_expand_cache_bypass += 1
+    step_stats = _keyword_step_stats.get()
+    if step_stats is not None:
+        step_stats.keyword_expand_cache_bypass += 1
 
 
 def _increment(recall_type: RecallType, *, hit: bool, stats: KeywordExpansionCacheStats) -> None:

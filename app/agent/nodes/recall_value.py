@@ -5,17 +5,18 @@
 """
 
 import re
+from dataclasses import dataclass
 
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
 from app.agent.errors import AgentErrorType, build_error_state
-from app.agent.exceptions import ExternalServiceError, classify_es_exception
-from app.agent.nodes.keyword_expansion_cache import expand_keywords_with_cache
-from app.agent.state import DataAgentState
+from app.agent.exceptions import classify_es_exception
+from app.agent.query_semantics import parse_query_semantics
+from app.agent.state import DataAgentState, QuerySemanticsState
 from app.core.log import logger
 from app.entities.value_info import ValueInfo
-from app.resilience.circuit_breaker import CircuitBreakerOpen, call_with_circuit_breaker
+from app.resilience.circuit_breaker import call_with_circuit_breaker
 from app.resilience.fallback import build_recall_fallback
 
 
@@ -45,93 +46,22 @@ def normalize_value_candidates(texts: list[str]) -> list[str]:
     return candidates
 
 
-DOMAIN_SUFFIXES: dict[str, list[str]] = {
-    "dim_region": ["地区", "区域", "大区"],
-    "dim_product.brand": ["品牌"],
-    "dim_product.category": ["品类"],
-}
-
 DOMAIN_LABELS: dict[str, str] = {
-    "dim_region": "地区",
+    "dim_region.region_name": "地区",
+    "dim_region.province": "省份",
     "dim_product.brand": "品牌",
     "dim_product.category": "品类",
+    "dim_product.product_name": "商品",
+    "dim_customer.member_level": "会员等级",
+    "dim_customer.gender": "性别",
 }
 
 DOMAIN_EXAMPLE_VALUES: dict[str, str] = {
-    "dim_region": "华北、华东、华南等",
+    "dim_region.region_name": "华北、华东、华南等",
+    "dim_region.province": "北京市、上海市、广东省等",
     "dim_product.brand": "美的、三星等",
     "dim_product.category": "食品饮料、手机数码等",
 }
-
-
-def detect_expected_domains(query: str) -> set[str]:
-    """检测 query 中期望过滤的字段域。返回域前缀集合（如 {'dim_region'}）。
-
-    只在用户明确指定了过滤值时返回域，group-by 语义（按大区/各地区）不算。
-    """
-    expected: set[str] = set()
-    for domain, suffixes in DOMAIN_SUFFIXES.items():
-        for suffix in suffixes:
-            idx = query.find(suffix)
-            if idx <= 0:
-                continue
-            # "按大区" / "各地区" 是 group-by，跳过
-            if query[idx - 1] in "按各每":
-                continue
-            expected.add(domain)
-            break
-    return expected
-
-
-def extract_domain_filter_values(query: str) -> dict[str, list[str]]:
-    """提取用户明确指定的过滤值，按字段域归类。"""
-    extracted: dict[str, list[str]] = {}
-    for domain, suffixes in DOMAIN_SUFFIXES.items():
-        values: list[str] = []
-        for suffix in suffixes:
-            idx = query.find(suffix)
-            if idx <= 0:
-                continue
-            if query[idx - 1] in "按各每":
-                continue
-            prefix_text = query[:idx]
-            segment = split_after_last_break(prefix_text)
-            values.extend(split_multi_values(segment))
-            break
-        if values:
-            extracted[domain] = dedupe_strings(values)
-    return extracted
-
-
-def split_after_last_break(text: str) -> str:
-    break_words = ["统计", "查询", "对比"] + [s for suffixes in DOMAIN_SUFFIXES.values() for s in suffixes]
-    last_pos = -1
-    last_len = 0
-    for word in break_words:
-        pos = text.rfind(word)
-        if pos >= 0 and pos + len(word) > last_pos + last_len:
-            last_pos = pos
-            last_len = len(word)
-    for index, char in enumerate(text):
-        if char in "，,；;：:" and index > last_pos:
-            last_pos = index
-            last_len = 1
-    return text[last_pos + last_len:].strip() if last_pos >= 0 else text.strip()
-
-
-def split_multi_values(text: str) -> list[str]:
-    text = text.strip()
-    if not text:
-        return []
-
-    parts = re.split(r"和|与|、|,|，|及", text)
-    values: list[str] = []
-    for part in parts:
-        value = part.strip()
-        if not value or value in {"按", "各", "每个", "分别", "统计", "查询", "对比", "的"}:
-            continue
-        values.append(value)
-    return values
 
 
 def dedupe_strings(values: list[str]) -> list[str]:
@@ -144,13 +74,73 @@ def dedupe_strings(values: list[str]) -> list[str]:
     return result
 
 
-def find_matched_values(expected_values: list[str], value_infos: list[ValueInfo], domain: str) -> list[str]:
-    matched: list[str] = []
-    domain_value_infos = [vi for vi in value_infos if vi.column_id.startswith(domain)]
-    for expected_value in expected_values:
-        if any(vi.value == expected_value for vi in domain_value_infos):
-            matched.append(expected_value)
-    return matched
+@dataclass(frozen=True)
+class GroundingEvaluation:
+    """字段值 Grounding 的确定性匹配结果。"""
+
+    matched_values: list[str]
+    missing_values: list[str]
+    matched_by_column: dict[str, list[str]]
+    missing_by_column: dict[str, list[str]]
+
+
+def build_grounding_candidates(
+    query_semantics: QuerySemanticsState,
+) -> dict[str, list[str]]:
+    """只返回解析器识别出的明确字段过滤值。"""
+
+    return {
+        column_id: dedupe_strings([value for value in values if value.strip()])
+        for column_id, values in query_semantics["filter_values"].items()
+        if values
+    }
+
+
+def normalize_grounding_value(value: str, column_id: str) -> str:
+    """按字段域执行保守的值等价归一化。"""
+
+    normalized = re.sub(r"\s+", "", value).casefold()
+    suffixes_by_column = {
+        "dim_region.region_name": ("地区", "区域", "大区"),
+        "dim_product.brand": ("品牌",),
+        "dim_product.category": ("品类", "类别"),
+    }
+    for suffix in suffixes_by_column.get(column_id, ()):
+        if normalized.endswith(suffix):
+            normalized = normalized.removesuffix(suffix)
+            break
+    return normalized
+
+
+def evaluate_grounding(
+    expected_by_column: dict[str, list[str]],
+    value_infos: list[ValueInfo],
+) -> GroundingEvaluation:
+    """按列校验用户指定值是否真实存在，不接受仅语义相似的候选。"""
+
+    matched_by_column: dict[str, list[str]] = {}
+    missing_by_column: dict[str, list[str]] = {}
+    for column_id, expected_values in expected_by_column.items():
+        recalled_values = {
+            normalize_grounding_value(value_info.value, column_id)
+            for value_info in value_infos
+            if value_info.column_id == column_id
+        }
+        matched = [
+            value
+            for value in expected_values
+            if normalize_grounding_value(value, column_id) in recalled_values
+        ]
+        missing = [value for value in expected_values if value not in matched]
+        matched_by_column[column_id] = matched
+        missing_by_column[column_id] = missing
+
+    return GroundingEvaluation(
+        matched_values=[value for values in matched_by_column.values() for value in values],
+        missing_values=[value for values in missing_by_column.values() for value in values],
+        matched_by_column=matched_by_column,
+        missing_by_column=missing_by_column,
+    )
 
 
 def build_warning_message(domain: str, missing_values: list[str], matched_values: list[str]) -> str:
@@ -197,154 +187,162 @@ async def recall_value(
 
     try:
         query = state["query"]
-        keywords = state["keywords"]
-
+        query_semantics = state.get("query_semantics") or parse_query_semantics(query)
+        grounding_candidates = build_grounding_candidates(query_semantics)
         value_es_repository = runtime.context["value_es_repository"]
+        explicit_values = [
+            value
+            for values in grounding_candidates.values()
+            for value in values
+        ]
+        implicit_values = state.get("keywords", [])
+        explicit_candidates = normalize_value_candidates(explicit_values)
+        explicit_candidate_set = set(explicit_candidates)
+        implicit_candidates = [
+            value
+            for value in normalize_value_candidates(implicit_values)
+            if value not in explicit_candidate_set
+        ]
+        exact_search_metrics = {
+            "explicit_candidate_count": len(explicit_candidates),
+            "implicit_candidate_count": len(implicit_candidates),
+            "explicit_call_count": 0,
+            "implicit_call_count": 0,
+            "total_call_count": 0,
+        }
+        value_search_observability = {
+            "value_exact_search_metrics": exact_search_metrics,
+            "value_fuzzy_search_skipped": True,
+        }
+        logger.info(f"显式字段值 exact 召回候选: {explicit_candidates}")
+        logger.info(f"隐式字段值 exact 召回候选: {implicit_candidates}")
+        if grounding_candidates:
+            logger.info(f"字段取值 Grounding 目标: {grounding_candidates}")
 
-        try:
-            extended_keywords = await call_with_circuit_breaker(
-                "llm_keyword_value",
-                lambda: expand_keywords_with_cache(
-                    recall_type="value",
-                    prompt_name="extend_keywords_for_value_recall",
-                    query=query,
-                    keywords=keywords,
-                ),
-            )
-        except (ExternalServiceError, CircuitBreakerOpen) as e:
-            logger.warning(f"{step} LLM keyword expansion degraded: {e}")
-            extended_keywords = []
-
-        value_candidates = normalize_value_candidates([query] + keywords + extended_keywords)
-        logger.info(f"字段取值候选词: {value_candidates}")
-
-        expected_domains = detect_expected_domains(query)
-        domain_filter_values = extract_domain_filter_values(query)
-        if expected_domains:
-            logger.info(f"域期望: {expected_domains}")
-            logger.info(f"字段取值 grounding 目标: {domain_filter_values}")
-
-        try:
-            exact_value_infos = await call_with_circuit_breaker(
-                "elasticsearch_value",
-                lambda: value_es_repository.search_exact_values(value_candidates),
-            )
-        except Exception as e:
-            classify_es_exception(e)
-            logger.error(f"{step} es exact search failed: {e}")
-            writer({"type": "progress", "step": step, "status": "success"})
-            return build_recall_fallback(
-                result_key="retrieved_value_infos",
-                warning_key="recall_value_warning",
-                dependency_name="Elasticsearch 字段值召回",
-                reason=str(e),
-            )
-
-        if exact_value_infos:
-            retrieved_value_infos = dedupe_value_infos(exact_value_infos)
-            logger.info(f"字段取值精确命中: {[value_info.id for value_info in retrieved_value_infos]}")
-        else:
-            logger.info("字段取值精确匹配未命中，退回模糊召回")
-            fuzzy_value_infos: list[ValueInfo] = []
-
-            for keyword in value_candidates:
-                try:
-                    fuzzy_value_infos.extend(
-                        await call_with_circuit_breaker(
-                            "elasticsearch_value",
-                            lambda: value_es_repository.search(keyword),
-                        )
-                    )
-                except Exception as e:
-                    classify_es_exception(e)
-                    logger.error(f"{step} es fuzzy search failed: {e}")
-                    writer({"type": "progress", "step": step, "status": "success"})
-                    return build_recall_fallback(
-                        result_key="retrieved_value_infos",
-                        warning_key="recall_value_warning",
-                        dependency_name="Elasticsearch 字段值召回",
-                        reason=str(e),
-                    )
-
-            retrieved_value_infos = dedupe_value_infos(fuzzy_value_infos)
-
-            # 如果有域期望，过滤掉不属于期望域的模糊结果
-            if expected_domains:
-                retrieved_value_infos = [
-                    vi for vi in retrieved_value_infos
-                    if any(vi.column_id.startswith(d) for d in expected_domains)
-                ]
-                logger.info(f"字段取值模糊召回域过滤后: {[value_info.id for value_info in retrieved_value_infos]}")
-
-        # 逐值 grounding 检查
-        if domain_filter_values:
-            all_missing_values: list[str] = []
-            all_matched_values: list[str] = []
-            failed_domains: list[str] = []
-            partial_warning_domain: str | None = None
-            missing_values_by_domain: dict[str, list[str]] = {}
-            matched_values_by_domain: dict[str, list[str]] = {}
-
-            for domain, expected_values in domain_filter_values.items():
-                matched_values = find_matched_values(expected_values, retrieved_value_infos, domain)
-                missing_values = [value for value in expected_values if value not in matched_values]
-                logger.info(
-                    f"字段取值 grounding 结果: domain={domain}, "
-                    f"matched={matched_values}, missing={missing_values}"
+        explicit_value_infos = []
+        if explicit_candidates:
+            try:
+                exact_search_metrics["explicit_call_count"] += 1
+                exact_search_metrics["total_call_count"] += 1
+                explicit_value_infos = await call_with_circuit_breaker(
+                    "elasticsearch_value",
+                    lambda: value_es_repository.search_exact_values(explicit_candidates),
                 )
-
-                missing_values_by_domain[domain] = missing_values
-                matched_values_by_domain[domain] = matched_values
-                all_missing_values.extend(missing_values)
-                all_matched_values.extend(matched_values)
-
-                if expected_values and not matched_values:
-                    failed_domains.append(domain)
-                elif missing_values:
-                    partial_warning_domain = partial_warning_domain or domain
-
-            if failed_domains:
-                failed_domain = failed_domains[0]
-                failed_missing_values = missing_values_by_domain[failed_domain]
-                error_msg = build_error_message(failed_domain, failed_missing_values)
-                logger.warning(f"字段取值 grounding 失败: {error_msg}")
-                writer({"type": "progress", "step": step, "status": "error"})
-                return {
-                    "retrieved_value_infos": [],
-                    "missing_values": failed_missing_values,
-                    "matched_values": matched_values_by_domain.get(failed_domain, []),
-                    **build_error_state(
-                        error_type=AgentErrorType.VALUE_GROUNDING_FAILED,
-                        error_message=error_msg,
-                        error_node="recall_value",
-                        recoverable=True,
-                        suggested_action=build_suggested_action(failed_domain),
-                    ),
-                }
-
-            if all_missing_values and all_matched_values:
-                warning_domain = partial_warning_domain or next(iter(domain_filter_values))
-                warning_message = build_warning_message(
-                    warning_domain,
-                    missing_values_by_domain[warning_domain],
-                    matched_values_by_domain[warning_domain],
-                )
-                logger.warning(f"字段取值部分 grounding 失败: {warning_message}")
-                return_state = {
-                    "retrieved_value_infos": retrieved_value_infos,
-                    "warning_type": "partial_value_grounding_failed",
-                    "warning_message": warning_message,
-                    "missing_values": all_missing_values,
-                    "matched_values": all_matched_values,
-                }
-                logger.info(f"检索到字段取值: {[value_info.id for value_info in retrieved_value_infos]}")
+            except Exception as e:
+                classify_es_exception(e)
+                logger.error(f"{step} es explicit exact search failed: {e}")
                 writer({"type": "progress", "step": step, "status": "success"})
-                return return_state
+                return build_recall_fallback(
+                    result_key="retrieved_value_infos",
+                    warning_key="recall_value_warning",
+                    dependency_name="Elasticsearch 显式字段值召回",
+                    reason=str(e),
+                ) | value_search_observability
+
+        implicit_value_infos = []
+        implicit_warning: dict[str, str] = {}
+        if implicit_candidates:
+            try:
+                exact_search_metrics["implicit_call_count"] += 1
+                exact_search_metrics["total_call_count"] += 1
+                implicit_value_infos = await call_with_circuit_breaker(
+                    "elasticsearch_value",
+                    lambda: value_es_repository.search_exact_values(implicit_candidates),
+                )
+            except Exception as e:
+                classify_es_exception(e)
+                logger.warning(f"{step} es implicit exact search failed: {e}")
+                fallback = build_recall_fallback(
+                    result_key="retrieved_value_infos",
+                    warning_key="recall_value_warning",
+                    dependency_name="Elasticsearch 隐式字段值召回",
+                    reason=str(e),
+                )
+                implicit_warning["recall_value_warning"] = fallback[
+                    "recall_value_warning"
+                ]
+
+        retrieved_value_infos = dedupe_value_infos(
+            [*explicit_value_infos, *implicit_value_infos]
+        )
+        logger.info(f"字段取值精确命中: {[value_info.id for value_info in retrieved_value_infos]}")
+
+        if not grounding_candidates:
+            logger.info("查询没有明确字段过滤值，跳过存在性校验并保留 exact 召回结果")
+            writer({"type": "progress", "step": step, "status": "success"})
+            return {
+                "retrieved_value_infos": retrieved_value_infos,
+                "grounding_validation_skipped": True,
+                "value_keyword_expansion_skipped": True,
+                "grounding_skip_reason": "no_explicit_filter_values",
+                **value_search_observability,
+                **implicit_warning,
+            }
+
+        evaluation = evaluate_grounding(grounding_candidates, retrieved_value_infos)
+        failed_columns = [
+            column_id
+            for column_id, expected_values in grounding_candidates.items()
+            if expected_values and not evaluation.matched_by_column[column_id]
+        ]
+        if failed_columns:
+            failed_column = failed_columns[0]
+            failed_missing_values = evaluation.missing_by_column[failed_column]
+            error_msg = build_error_message(failed_column, failed_missing_values)
+            logger.warning(f"字段取值 Grounding 失败: {error_msg}")
+            writer({"type": "progress", "step": step, "status": "error"})
+            return {
+                "retrieved_value_infos": [],
+                "missing_values": failed_missing_values,
+                "matched_values": evaluation.matched_by_column[failed_column],
+                "grounding_validation_skipped": False,
+                "value_keyword_expansion_skipped": True,
+                **value_search_observability,
+                **implicit_warning,
+                **build_error_state(
+                    error_type=AgentErrorType.VALUE_GROUNDING_FAILED,
+                    error_message=error_msg,
+                    error_node="recall_value",
+                    recoverable=True,
+                    suggested_action=build_suggested_action(failed_column),
+                ),
+            }
+
+        if evaluation.missing_values and evaluation.matched_values:
+            warning_column = next(
+                column_id
+                for column_id, missing_values in evaluation.missing_by_column.items()
+                if missing_values
+            )
+            warning_message = build_warning_message(
+                warning_column,
+                evaluation.missing_by_column[warning_column],
+                evaluation.matched_by_column[warning_column],
+            )
+            logger.warning(f"字段取值部分 Grounding 失败: {warning_message}")
+            writer({"type": "progress", "step": step, "status": "success"})
+            return {
+                "retrieved_value_infos": retrieved_value_infos,
+                "warning_type": "partial_value_grounding_failed",
+                "warning_message": warning_message,
+                "missing_values": evaluation.missing_values,
+                "matched_values": evaluation.matched_values,
+                "grounding_validation_skipped": False,
+                "value_keyword_expansion_skipped": True,
+                **value_search_observability,
+                **implicit_warning,
+            }
 
         logger.info(f"检索到字段取值: {[value_info.id for value_info in retrieved_value_infos]}")
         writer({"type": "progress", "step": step, "status": "success"})
 
-        return {"retrieved_value_infos": retrieved_value_infos}
+        return {
+            "retrieved_value_infos": retrieved_value_infos,
+            "grounding_validation_skipped": False,
+            "value_keyword_expansion_skipped": True,
+            **value_search_observability,
+            **implicit_warning,
+        }
 
     except Exception as e:
         logger.error(f"{step} failed: {e}")
