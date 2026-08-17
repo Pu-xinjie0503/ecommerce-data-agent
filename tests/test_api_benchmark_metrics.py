@@ -6,7 +6,8 @@ from argparse import Namespace
 
 import pytest
 
-from eval.benchmark_api import RequestResult, build_report
+import eval.benchmark_api as benchmark_api
+from eval.benchmark_api import RequestResult, build_report, load_cases
 from eval.compare_runs import compare_benchmark_reports
 from eval.experiment import ExperimentCompatibilityError
 
@@ -29,6 +30,67 @@ def test_build_report_records_throughput_warmup_and_raw_requests():
     assert report["summary"]["technical_error_rate"] == 50.0
     assert report["summary"]["p95_latency_ms"] == 290.0
     assert len(report["results"]) == 2
+
+
+def test_load_cases_preserves_expected_branch():
+    """固定压测集的预期分支必须进入每个计划请求。"""
+
+    cases = load_cases("eval/benchmark_cases.yaml", "mixed-core8")
+
+    assert cases[0]["branch"] == "normal"
+    assert cases[5]["branch"] == "grounding_error"
+
+
+def test_build_report_marks_unexpected_business_outcome_as_branch_mismatch():
+    """正常 Case 被 Grounding 拦截时不能计入分支命中。"""
+
+    args = _args()
+    success = _result(1, 100.0, "normal_success")
+    success.expected_branch = "normal"
+    success.actual_branch = "normal"
+    success.branch_matched = True
+    unexpected = _result(2, 200.0, "expected_business_outcome")
+    unexpected.business_outcome_type = "value_grounding_failed"
+    unexpected.expected_branch = "normal"
+    unexpected.actual_branch = "grounding_error"
+    unexpected.branch_matched = False
+
+    report = build_report(args, [success, unexpected], total_duration_seconds=1.0)
+
+    assert report["summary"]["branch_matched_count"] == 1
+    assert report["summary"]["branch_mismatch_count"] == 1
+    assert report["summary"]["branch_accuracy"] == 50.0
+    assert report["results"][1]["expected_branch"] == "normal"
+    assert report["results"][1]["actual_branch"] == "grounding_error"
+    assert report["results"][1]["branch_matched"] is False
+
+
+@pytest.mark.parametrize(
+    ("outcome_category", "business_outcome_type", "expected"),
+    [
+        ("normal_success", None, "normal"),
+        ("technical_error", None, "technical_error"),
+        ("expected_business_outcome", "value_grounding_failed", "grounding_error"),
+        (
+            "expected_business_outcome",
+            "partial_value_grounding_failed",
+            "grounding_warning",
+        ),
+        ("expected_business_outcome", "need_clarification", "clarification"),
+        ("expected_business_outcome", "unsafe_query", "unsafe"),
+    ],
+)
+def test_resolve_actual_branch_uses_case_branch_vocabulary(
+    outcome_category: str,
+    business_outcome_type: str | None,
+    expected: str,
+):
+    """实际响应应转换为与 Case branch 相同的稳定分类。"""
+
+    assert (
+        benchmark_api.resolve_actual_branch(outcome_category, business_outcome_type)
+        == expected
+    )
 
 
 def test_compare_benchmark_reports_calculates_latency_improvement():

@@ -22,17 +22,21 @@ from eval.experiment import file_sha256
 DEFAULT_URL = "http://127.0.0.1:8000/api/query"
 DEFAULT_CASES_FILE = Path(__file__).with_name("benchmark_cases.yaml")
 NORMAL_CASES = [
-    {"id": "normal_001", "query": "华北地区的总销售额"},
-    {"id": "normal_002", "query": "统计美的品牌的销售额"},
-    {"id": "normal_003", "query": "按大区统计销售额"},
-    {"id": "normal_004", "query": "统计 2025 年第一季度的销售额"},
+    {"id": "normal_001", "branch": "normal", "query": "华北地区的总销售额"},
+    {"id": "normal_002", "branch": "normal", "query": "统计美的品牌的销售额"},
+    {"id": "normal_003", "branch": "normal", "query": "按大区统计销售额"},
+    {"id": "normal_004", "branch": "normal", "query": "统计 2025 年第一季度的销售额"},
 ]
 MIXED_CORE8_CASES = [
     *NORMAL_CASES,
-    {"id": "core_005", "query": "统计火星地区的销售额"},
-    {"id": "core_006", "query": "对比华北和火星地区的销售额"},
-    {"id": "core_007", "query": "哪个品类卖得最好"},
-    {"id": "core_008", "query": "帮我执行 DROP TABLE fact_order"},
+    {"id": "core_005", "branch": "grounding_error", "query": "统计火星地区的销售额"},
+    {
+        "id": "core_006",
+        "branch": "grounding_warning",
+        "query": "对比华北和火星地区的销售额",
+    },
+    {"id": "core_007", "branch": "clarification", "query": "哪个品类卖得最好"},
+    {"id": "core_008", "branch": "unsafe", "query": "帮我执行 DROP TABLE fact_order"},
 ]
 
 TECHNICAL_ERROR_TYPES = {
@@ -83,6 +87,9 @@ class RequestResult:
     outcome_category: str
     business_outcome_type: str | None
     technical_error_type: str | None
+    expected_branch: str = "normal"
+    actual_branch: str = "unknown"
+    branch_matched: bool = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -125,6 +132,7 @@ def load_cases(path: str | None, case_set: str) -> list[dict[str, Any]]:
             {
                 "id": case.get("id", f"case_{index:03d}"),
                 "query": query,
+                "branch": case.get("branch", "normal"),
             }
         )
     if not loaded:
@@ -173,6 +181,28 @@ def classify_outcome(
     if error_type:
         return "technical_error", None, error_type
     return "normal_success", None, None
+
+
+def resolve_actual_branch(
+    outcome_category: str,
+    business_outcome_type: str | None,
+) -> str:
+    """将 API 实际结果转换为与 Case branch 一致的分类。"""
+
+    if outcome_category == "normal_success":
+        return "normal"
+    if outcome_category == "technical_error":
+        return "technical_error"
+    business_branch_map = {
+        "value_grounding_failed": "grounding_error",
+        "partial_value_grounding_failed": "grounding_warning",
+        "need_clarification": "clarification",
+        "unsafe_query": "unsafe",
+    }
+    return business_branch_map.get(
+        str(business_outcome_type),
+        str(business_outcome_type or outcome_category),
+    )
 
 
 async def request_once(
@@ -236,6 +266,8 @@ async def request_once(
     )
     success = outcome_category == "normal_success"
     failed = outcome_category == "technical_error"
+    expected_branch = str(case.get("branch") or "normal")
+    actual_branch = resolve_actual_branch(outcome_category, business_outcome_type)
 
     return RequestResult(
         request_index=request_index,
@@ -256,6 +288,9 @@ async def request_once(
         outcome_category=outcome_category,
         business_outcome_type=business_outcome_type,
         technical_error_type=technical_error_type,
+        expected_branch=expected_branch,
+        actual_branch=actual_branch,
+        branch_matched=expected_branch == actual_branch,
     )
 
 
@@ -295,10 +330,12 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 def build_report(args: argparse.Namespace, results: list[RequestResult], total_duration_seconds: float) -> dict[str, Any]:
     durations = [item.duration_ms for item in results]
     normal_success_count = sum(1 for item in results if item.outcome_category == "normal_success")
-    expected_business_outcome_count = sum(
+    observed_business_outcome_count = sum(
         1 for item in results if item.outcome_category == "expected_business_outcome"
     )
     technical_error_count = sum(1 for item in results if item.outcome_category == "technical_error")
+    branch_matched_count = sum(1 for item in results if item.branch_matched)
+    branch_mismatch_count = len(results) - branch_matched_count
     business_outcomes = Counter(
         item.business_outcome_type or "unknown"
         for item in results
@@ -315,9 +352,14 @@ def build_report(args: argparse.Namespace, results: list[RequestResult], total_d
     summary = {
         "total_requests": len(results),
         "normal_success_count": normal_success_count,
-        "expected_business_outcome_count": expected_business_outcome_count,
+        "observed_business_outcome_count": observed_business_outcome_count,
         "technical_error_count": technical_error_count,
         "technical_error_rate": round(technical_error_count / len(results) * 100, 2) if results else 0.0,
+        "branch_matched_count": branch_matched_count,
+        "branch_mismatch_count": branch_mismatch_count,
+        "branch_accuracy": round(branch_matched_count / len(results) * 100, 2)
+        if results
+        else 0.0,
         "business_outcome_distribution": dict(business_outcomes),
         "technical_error_type_distribution": dict(technical_errors),
         "warning_type_distribution": dict(warning_types),
@@ -388,12 +430,13 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         "",
         "## 总体统计",
         "",
-        "| total_requests | normal_success_count | expected_business_outcome_count | technical_error_count | technical_error_rate | throughput_rps | avg_latency_ms | p50 | p90 | p95 | p99 | max |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| total_requests | normal_success_count | observed_business_outcome_count | branch_accuracy | technical_error_count | technical_error_rate | throughput_rps | avg_latency_ms | p50 | p90 | p95 | p99 | max |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         (
             f"| {summary['total_requests']} | {summary['normal_success_count']} | "
-            f"{summary['expected_business_outcome_count']} | {summary['technical_error_count']} | "
-            f"{summary['technical_error_rate']}% | {summary['throughput_rps']} | {summary['avg_latency_ms']} | "
+            f"{summary['observed_business_outcome_count']} | {summary['branch_accuracy']}% | "
+            f"{summary['technical_error_count']} | {summary['technical_error_rate']}% | "
+            f"{summary['throughput_rps']} | {summary['avg_latency_ms']} | "
             f"{summary['p50_latency_ms']} | {summary['p90_latency_ms']} | {summary['p95_latency_ms']} | "
             f"{summary['p99_latency_ms']} | {summary['max_latency_ms']} |"
         ),
@@ -415,6 +458,28 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             lines.append(f"- {warning_type}: {count}")
     else:
         lines.append("- none: 0")
+    lines.extend(
+        [
+            "",
+            "## Case 分支命中",
+            "",
+            f"- 命中：{summary['branch_matched_count']}",
+            f"- 不匹配：{summary['branch_mismatch_count']}",
+            f"- 分支准确率：{summary['branch_accuracy']}%",
+            "",
+            "| case_id | query | expected_branch | actual_branch | outcome_category | business_outcome_type | trace_path |",
+            "|---|---|---|---|---|---|---|",
+        ]
+    )
+    for item in report["results"]:
+        if item["branch_matched"]:
+            continue
+        query = str(item["query"]).replace("|", "\\|")
+        lines.append(
+            f"| {item['case_id']} | {query} | {item['expected_branch']} | "
+            f"{item['actual_branch']} | {item['outcome_category']} | "
+            f"{item.get('business_outcome_type') or ''} | {item.get('trace_path') or ''} |"
+        )
     lines.extend(
         [
             "",

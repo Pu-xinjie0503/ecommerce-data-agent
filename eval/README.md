@@ -60,7 +60,9 @@ uv run python -m eval.benchmark_api --cases eval/benchmark_cases.yaml --concurre
 暖缓存预热完成，已清零命中统计并开始计量轮
 ```
 
-运行结束会打印 Execution Accuracy、意图宏平均、耗时和报告路径。API 压测会打印技术错误率、吞吐量、P50/P90/P95/P99 与最慢请求。
+运行结束会打印 Execution Accuracy、意图宏平均、耗时和报告路径。API 压测会打印技术错误率、分支准确率、吞吐量、P50/P90/P95/P99 与最慢请求。
+
+API 报告中的 `technical_error_rate` 只衡量 HTTP、SSE 和外部依赖是否发生技术故障；`branch_accuracy` 才衡量每个 Case 是否进入预期的正常、Grounding、澄清或安全分支。正常 Case 被 Grounding 拦截时技术错误率仍可为 0%，但 `branch_matched` 必须为 `false`。
 
 ## 4. 报告与 Trace
 

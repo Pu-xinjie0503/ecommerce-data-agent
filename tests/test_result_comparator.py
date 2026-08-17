@@ -76,3 +76,15 @@ def test_compare_results_can_ignore_alias_names():
     )
 
     assert comparison.matched is True
+
+
+def test_compare_results_aligns_same_columns_regardless_of_select_order():
+    """列名相同时应按列名对齐，不能依赖 SQL SELECT 列顺序。"""
+
+    comparison = compare_results(
+        actual=[{"category": "休闲零食", "member_level": "白银", "total_quantity": 76}],
+        expected=[{"member_level": "白银", "category": "休闲零食", "total_quantity": 76}],
+        compare_columns=False,
+    )
+
+    assert comparison.matched is True

@@ -130,17 +130,17 @@ def _rows_equal(
 ) -> bool:
     if len(actual) != len(expected):
         return False
+    if actual.keys() == expected.keys():
+        return all(
+            _values_equal(actual[column], expected[column], tolerance)
+            for column in actual
+        )
     if not compare_columns:
         return all(
             _values_equal(actual_value, expected_value, tolerance)
             for actual_value, expected_value in zip(actual.values(), expected.values())
         )
-    if actual.keys() != expected.keys():
-        return False
-    return all(
-        _values_equal(actual[column], expected[column], tolerance)
-        for column in actual
-    )
+    return False
 
 
 def _values_equal(actual: Any, expected: Any, tolerance: float) -> bool:
